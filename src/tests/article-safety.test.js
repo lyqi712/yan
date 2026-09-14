@@ -7,6 +7,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 test('读取图片前核对已打开文件身份，拒绝检查后被替换的目标',t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'yan-race-')),inside=path.join(root,'in.png'),other=path.join(root,'other.png');t.after(()=>fs.rmSync(root,{recursive:true,force:true}));fs.writeFileSync(inside,png);fs.writeFileSync(other,png)
  assert.deepEqual(readLocalImage(inside,[root]),png)
+ if(process.platform==='win32'){t.skip('Windows没有POSIX O_NOFOLLOW；junction边界由既有跨平台回归覆盖');return}
  const original=fs.openSync;t.mock.method(fs,'openSync',function(p,...args){return original(p===inside?other:p,...args)})
  assert.throws(()=>readLocalImage(inside,[root]),/变化/)
 })
