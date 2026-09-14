@@ -44,7 +44,7 @@ test('实际MCP在上游离线时仍握手和发现工具，查询给出可读�
   const server = http.createServer(); await new Promise(r => server.listen(0, '127.0.0.1', r)); const port = server.address().port; await new Promise(r => server.close(r))
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.resolve(__dirname, '../server.js')], env: { ...process.env, WXLENS_HTTP_BASE_URL: `http://127.0.0.1:${port}`, WXLENS_AUTO_START: 'false' }, stderr: 'pipe' })
   const client = new Client({ name: 'yan-offline-fixture', version: '1.0.0' }); t.after(() => client.close())
-  await client.connect(transport); assert.equal((await client.listTools()).tools.length, 26)
+  await client.connect(transport); assert.equal((await client.listTools()).tools.length, 37)
   const guide = await client.callTool({ name: 'yan_usage_guide', arguments: {} }); assert.notEqual(guide.isError, true)
   const result = await client.callTool({ name: 'list_sessions', arguments: { limit: 1 } }); assert.equal(result.isError, true); assert.match(result.content[0].text, /WxLens/)
 })

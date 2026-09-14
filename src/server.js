@@ -3,6 +3,7 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js')
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js')
 const { z } = require('zod')
 const { registerAdvanced } = require('./advanced-tools')
+const { registerArticles } = require('./article-tools')
 const {
   resolveAccountDir, getAllowedRoots, walkFiles, extractLocalFile, searchLocalFiles, parseMergedForwardSnippet, getParserCapabilities,
 } = require('./content-tools')
@@ -42,7 +43,7 @@ async function createServer(options = {}) {
   function register(name, description, schema, handler) {
     const input = z.object(schema).strict()
     tools.set(name, { description, input, handler })
-    server.tool(name, description, schema, { readOnlyHint: !['analyze_wechat_chat', 'export_wechat_package', 'configure_watchlist', 'poll_watchlist', 'read_watchlist_batch', 'ack_watchlist_batch'].includes(name), destructiveHint: false, openWorldHint: false }, handler)
+    server.tool(name, description, schema, { readOnlyHint: !['fetch_wechat_article', 'import_wechat_article', 'download_article_images', 'analyze_wechat_chat', 'export_wechat_package', 'configure_watchlist', 'poll_watchlist', 'read_watchlist_batch', 'ack_watchlist_batch'].includes(name), destructiveHint: false, openWorldHint: ['search_wechat_articles_tencent', 'search_wechat_articles', 'fetch_wechat_article', 'read_article_image', 'download_article_images'].includes(name) }, handler)
   }
   async function callTool(name, params = {}) {
     const tool = tools.get(name)
@@ -242,8 +243,8 @@ async function createServer(options = {}) {
         messageRead: { maxPerCall: 5000, sourcePageSize: 100, supportsOffset: true, supportsTimeRange: true, supportsCallerManagedIncrementalCursor: true },
         parsers: getParserCapabilities(),
         capabilities: ['text chat', '5000-message paginated read', 'bounded merged search context windows', 'quality-gated evidence-linked classification', 'message-function labels', 'question-response-resolution context threads', 'evidence-linked decision-task-risk-result work register', 'merged-forward indexed preview', 'post/article indexed text', 'multi-format local attachment extraction', 'image OCR', 'local timed ASR and keyframe OCR', 'portable audited ZIP export'],
-        safety: { wechatDatabaseWrites: false, privateProtocol: false, automaticAccountDownload: false, processInjection: false, networkArticleFetch: false },
-        limitations: ['Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
+        safety: { wechatDatabaseWrites: false, privateProtocol: false, automaticAccountDownload: false, processInjection: false, networkArticleFetch: true },
+        limitations: ['Article history covers collected URLs only, not complete account history. Public HTTP may require browser verification; import an explicitly opened page without cookies.', 'MCP image content requires client/model image support; encrypted DAT images are unsupported.', 'Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
       })
     } catch (e) { return failure(e) }
   })
@@ -288,6 +289,7 @@ async function createServer(options = {}) {
   })
 
   registerAdvanced({ register, result, failure, server, request })
+  registerArticles({ register, result, failure, request, accountContext, store: options.articleStore })
 
   if (options.connect) {
     await server.connect(new StdioServerTransport())

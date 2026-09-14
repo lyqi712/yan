@@ -4,7 +4,7 @@
 
 眼是一个 **MCP stdio 服务**。在 Proma、Claude Desktop、Cursor、Codex 或其他支持本地 MCP 的 AI 客户端中接入后，用自然语言提出任务。眼负责读取和组织有来源的材料，你的 AI 负责理解与总结。
 
-- **26 个工具**：保留基础读取与附件功能，增加人物跨会话、多群扫描、总结证据包和持久关注列表。
+- **37 个工具**：保留基础读取与附件功能，增加人物跨会话、多群扫描、持久关注列表、公众号多轮发现、文章正文与图片读取。
 - **4 个工作流提示词**：聊天简报、人物提取、多群关注、议题追踪。
 - **本机只读微信**：连接已有的 WxLens 本机 HTTP 服务；不修改微信消息、不群发、不自动下载聊天附件。
 - **恢复进度**：关注批次可重试、分批读取和确认；单群失败不会把其他群的结果丢掉。
@@ -98,6 +98,7 @@ npm run config:mcp
 | 聊天总结 | `prepare_chat_summary`、`analyze_wechat_chat` | 8 类总结目标，统计、规则候选和可引用原文；由 AI 撰写总结 |
 | 还原语境 | `get_message_context`、`read_merged_forward`、`read_wechat_post` | 前后消息、合并转发索引预览、本地文章卡片 |
 | 多群关注 | `configure_watchlist`、`list_watchlists`、`poll_watchlist`、`read_watchlist_batch`、`ack_watchlist_batch` | 保存关注规则、检查新增、续扫积压、重试与确认 |
+| 公众号文章与图片 | `search_wechat_articles`、`search_wechat_articles_batch`、`search_wechat_articles_tencent`、`fetch_wechat_article`、`import_wechat_article`、`read_article_image`、`download_article_images` | 多来源候选发现、原文导入、正文解析、配图返回和下载；多轮结果去重并保留来源与失败边界 |
 | 本地附件 | `list_wechat_attachments`、`extract_wechat_attachment_text`、`search_wechat_attachment_text` | 查找文件、提取正文、按正文搜索 |
 | 证据导出 | `export_wechat_package` | 原始窗口、精选、噪声分账、附件文本、审计、SHA-256 ZIP |
 
@@ -132,6 +133,8 @@ CLI 将结果保存在 `.local/receipts/`，不自动发微信、邮件或外部
 ## 文件解析与可选能力
 
 基础 Node 解析覆盖文本、HTML、DOCX、XLSX/XLSM、PPTX、ODT/ODS/ODP、EPUB、ZIP 文本项；表格公式使用缓存值，不执行宏。PDF 文本层可用系统 `pdftotext`；旧 DOC 需要 `antiword`。图片、扫描 PDF、旧 XLS 和音视频可安装可选运行时。
+
+公众号文章与图片也可通过 MCP 读取：`search_wechat_articles` 使用公开微信索引发现候选；`search_wechat_articles_tencent` 是可选的腾讯云 WSA SearchPro，限定公众号域名和最近 N 天，需用户自行开通服务并在客户端安全配置凭据。两种搜索都只是候选发现，不承诺完整公众号历史。`fetch_wechat_article` 读取公开文章，`import_wechat_article` 接收本人或 AI 浏览器正常打开后的 HTML 快照；`read_article_image` 返回原生 MCP `image` 内容块，`download_article_images` 保存带 SHA-256 清单的配图。聊天分享链接可用 `list_shared_articles` 提取；`read_wechat_image` 只读取调用方明确选定的标准本地图片，不解密 `.dat`。
 
 [可选运行时说明](docs/optional-runtime.md) 列出 Python、模型、ffmpeg、许可及已验证边界。缺少模型会明确提示，不在读取时自动下载模型。压缩包在解析前检查条目数和实际展开字节。
 

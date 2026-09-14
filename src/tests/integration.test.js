@@ -16,7 +16,7 @@ async function fixture(t, handler) {
   const server = http.createServer(handler); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => { server.closeAllConnections(); server.close() }); return `http://127.0.0.1:${server.address().port}`
 }
-test('真实stdio MCP握手、发现26工具/4提示词/资源并调用跨群提取', { timeout: 20000 }, async t => {
+test('真实stdio MCP握手、发现37工具/4提示词/资源并调用跨群提取', { timeout: 20000 }, async t => {
   const base = await fixture(t, (req, res) => {
     const url = new URL(req.url, 'http://fixture'); let data = {}
     if (url.pathname === '/api/messages') data = { messages: Number(url.searchParams.get('offset')) ? [] : [{ localId: 1, timestamp: 100, senderId: 'person-a', senderName: '虚构人物', content: '周五验收', type: 1 }] }
@@ -25,7 +25,7 @@ test('真实stdio MCP握手、发现26工具/4提示词/资源并调用跨群提
   })
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.resolve(__dirname, '../server.js')], env: { ...process.env, WXLENS_HTTP_BASE_URL: base, WXLENS_ACCOUNT_DIR: '', WXLENS_AUTO_START: 'false' }, stderr: 'pipe' })
   const client = new Client({ name: 'yan-acceptance', version: '1.0.0' }); t.after(() => client.close()); await client.connect(transport)
-  const tools = (await client.listTools()).tools; assert.equal(tools.length, 26)
+  const tools = (await client.listTools()).tools; assert.equal(tools.length, 37)
   assert.equal(tools.find(tool => tool.name === 'configure_watchlist').annotations.readOnlyHint, false)
   assert.equal((await client.listPrompts()).prompts.length, 4); assert.equal((await client.listResources()).resources[0].uri, 'yan://guide')
   assert.match((await client.readResource({ uri: 'yan://guide' })).contents[0].text, /人物/)
