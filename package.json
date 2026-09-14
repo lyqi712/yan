@@ -1,6 +1,6 @@
 {
   "name": "yan-wechat-mcp",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "private": true,
   "description": "眼：通过MCP在你的AI客户端检索、提取和总结微信聊天，支持人物跨会话提取及多群关注。",
   "type": "commonjs",
