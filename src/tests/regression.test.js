@@ -1,0 +1,43 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const os = require('node:os')
+const { fetchMessageRange, resolveOwnedOutputDir } = require('../record-pipeline')
+const { extractLocalFile, isWithinAllowedRoots } = require('../content-tools')
+const { validateBaseUrl, renderMcpConfigs } = require('../config')
+
+const rows = Array.from({ length: 12 }, (_, i) => ({ localId: 12 - i, timestamp: 1000 + 12 - i, type: 1, content: `消息 ${12-i}` }))
+test('分页中途达到 limit 后，下一页游标不跳过尚未返回的记录', async () => {
+  const page = await fetchMessageRange(async ({ limit, offset }) => rows.slice(offset, offset + limit), { limit: 3, page_size: 5 })
+  assert.equal(page.pagination.nextOffset, 3)
+  const next = await fetchMessageRange(async ({ limit, offset }) => rows.slice(offset, offset + limit), { limit: 3, page_size: 5, offset: page.pagination.nextOffset })
+  assert.deepEqual(next.messages.map(m => m.localId), [7, 8, 9])
+})
+test('重复页必须在有界请求数内停止并标记未完成', async () => {
+  let calls = 0
+  const page = await fetchMessageRange(async () => { if (++calls > 5) throw new Error('未停止'); return rows.slice(0, 2) }, { limit: 10, page_size: 2 })
+  assert.equal(page.pagination.complete, false)
+  assert.equal(page.pagination.stopReason, 'no-progress')
+})
+test('无效时间范围不能查询', async () => {
+  await assert.rejects(fetchMessageRange(async () => [], { start_time: 20, end_time: 10 }), /时间/)
+})
+test('目录 junction 不能让附件读取逃出白名单', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yan-boundary-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const allowed = path.join(root, 'allowed'), outside = path.join(root, 'outside')
+  fs.mkdirSync(allowed); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'private.txt'), 'synthetic private fixture')
+  fs.symlinkSync(outside, path.join(allowed, 'link'), process.platform === 'win32' ? 'junction' : 'dir')
+  const target = path.join(allowed, 'link', 'private.txt')
+  assert.equal(isWithinAllowedRoots(target, [allowed]), false)
+  await assert.rejects(extractLocalFile(target, [allowed]), /白名单|allowlisted/)
+  assert.equal(resolveOwnedOutputDir('s', path.join(allowed, 'link', 'new'), allowed), null)
+})
+test('本机地址与客户端配置', () => {
+  assert.equal(validateBaseUrl('http://127.0.0.1:5032/'), 'http://127.0.0.1:5032')
+  for (const value of ['https://example.com', 'http://127.0.0.1:5032/x', 'http://localhost:5032', 'http://user:pass@127.0.0.1']) assert.throws(() => validateBaseUrl(value))
+  const configs = renderMcpConfigs()
+  assert.equal(JSON.parse(configs.json).mcpServers.yan.args.length, 1)
+  assert.match(configs.codex, /\[mcp_servers\.yan\]/)
+})

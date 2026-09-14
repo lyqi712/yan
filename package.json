@@ -1,0 +1,38 @@
+{
+  "name": "yan-wechat-mcp",
+  "version": "4.0.0",
+  "private": true,
+  "description": "眼：通过MCP在你的AI客户端检索、提取和总结微信聊天，支持人物跨会话提取及多群关注。",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/cli.js mcp",
+    "mcp": "node src/cli.js mcp",
+    "doctor": "node src/cli.js doctor",
+    "config:mcp": "node src/cli.js mcp-config",
+    "test": "node --test src/tests/*.test.js",
+    "check": "node scripts/check.cjs",
+    "package:product": "node scripts/package.cjs",
+    "licenses": "node scripts/licenses.cjs",
+    "setup": "node src/cli.js setup",
+    "package:integrated": "node scripts/package-integrated.cjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "chardet": "^2.1.1",
+    "cheerio": "^1.1.2",
+    "iconv-lite": "^0.7.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.10.0",
+    "yauzl": "3.4.0",
+    "zod": "^3.25.76"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lyqi712/yan.git"
+  }
+}

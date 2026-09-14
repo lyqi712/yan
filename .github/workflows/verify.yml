@@ -1,0 +1,32 @@
+name: Verify Yan
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run check
+      - run: python -m compileall -q ocr-runtime
+      - run: npm run package:product
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yan-source-${{ matrix.os }}-node${{ matrix.node }}
+          path: dist/*
