@@ -43,7 +43,7 @@ async function createServer(options = {}) {
   function register(name, description, schema, handler) {
     const input = z.object(schema).strict()
     tools.set(name, { description, input, handler })
-    server.tool(name, description, schema, { readOnlyHint: !['fetch_wechat_article', 'import_wechat_article', 'download_article_images', 'analyze_wechat_chat', 'export_wechat_package', 'configure_watchlist', 'poll_watchlist', 'read_watchlist_batch', 'ack_watchlist_batch'].includes(name), destructiveHint: false, openWorldHint: ['search_wechat_articles_tencent', 'search_wechat_articles', 'fetch_wechat_article', 'read_article_image', 'download_article_images'].includes(name) }, handler)
+    server.tool(name, description, schema, { readOnlyHint: !['fetch_wechat_article', 'import_wechat_article', 'download_article_images', 'analyze_wechat_chat', 'export_wechat_package', 'configure_watchlist', 'poll_watchlist', 'read_watchlist_batch', 'ack_watchlist_batch'].includes(name), destructiveHint: false, openWorldHint: ['search_wechat_articles_tencent', 'search_wechat_articles', 'search_wechat_articles_batch', 'fetch_wechat_article', 'read_article_image', 'download_article_images'].includes(name) }, handler)
   }
   async function callTool(name, params = {}) {
     const tool = tools.get(name)

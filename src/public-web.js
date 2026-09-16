@@ -51,7 +51,7 @@ async function fetchPublic(value,kind,options={}) {
    const req=https.get(current,{agent:false,headers:{'User-Agent':'Yan-WeChat-MCP/4.1','Accept':kind!=='image'?'text/html':'image/png,image/jpeg,image/webp,image/gif','Accept-Encoding':'identity'},lookup:(_host,opts,cb)=>opts?.all?cb(null,[address]):cb(null,address.address,address.family)},res=>{
     const status=res.statusCode
     if(status>=300&&status<400) {res.resume();done(null,{redirect:res.headers.location});return}
-    if(status!==200) {res.destroy();done(new Error(`公开资源返回HTTP ${status}；未读取正文`));return}
+    if(status!==200) {res.destroy();done(Object.assign(new Error(`公开资源返回HTTP ${status}；未读取正文`),{status,code:status===429?'RATE_LIMITED':status===403?'ACCESS_DENIED':'HTTP_ERROR'}));return}
     if(res.headers['content-encoding'] && res.headers['content-encoding']!=='identity') {res.destroy();done(new Error('不支持压缩响应，请使用浏览器快照导入'));return}
     if(Number(res.headers['content-length'])>maxBytes) {res.destroy();done(new Error('公开资源超过大小限制'));return}
     const chunks=[];let bytes=0
@@ -64,7 +64,7 @@ async function fetchPublic(value,kind,options={}) {
   })
   if(!response.redirect) return response
   let next;try{next=new URL(response.redirect,current)}catch{throw new Error('无效的重定向')}
-  if(kind!=='image' && /captcha|verify|login|wappoc|antispider|websearch/.test(next.pathname)) throw new Error('微信要求浏览器验证或登录；请本人正常打开文章，完成验证后导入浏览器页面，不自动重试或绕过')
+  if(kind!=='image' && /captcha|verify|login|wappoc|antispider|websearch/.test(next.pathname)) throw Object.assign(new Error('资源要求浏览器验证或登录；请本人正常处理，不自动重试或绕过'),{code:'VERIFICATION_REQUIRED'})
   current=validateUrl(next.href,kind)
  }
  throw new Error('公开资源重定向次数超过限制')

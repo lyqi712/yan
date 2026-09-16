@@ -8,6 +8,7 @@
 | @modelcontextprotocol/sdk | 1.29.0 | MIT | git+https://github.com/modelcontextprotocol/typescript-sdk.git |
 | @xmldom/xmldom | 0.8.15 | MIT | git://github.com/xmldom/xmldom.git |
 | accepts | 2.0.0 | MIT | jshttp/accepts |
+| acorn | 8.15.0 | MIT | git+https://github.com/acornjs/acorn.git |
 | ajv | 8.20.0 | MIT | ajv-validator/ajv |
 | ajv-formats | 3.0.1 | MIT | git+https://github.com/ajv-validator/ajv-formats.git |
 | argparse | 1.0.10 | MIT | nodeca/argparse |

@@ -7,9 +7,10 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 test('读取图片前核对已打开文件身份，拒绝检查后被替换的目标',t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'yan-race-')),inside=path.join(root,'in.png'),other=path.join(root,'other.png');t.after(()=>fs.rmSync(root,{recursive:true,force:true}));fs.writeFileSync(inside,png);fs.writeFileSync(other,png)
  assert.deepEqual(readLocalImage(inside,[root]),png)
- if(process.platform==='win32'){t.skip('Windows没有POSIX O_NOFOLLOW；junction边界由既有跨平台回归覆盖');return}
- const original=fs.openSync;t.mock.method(fs,'openSync',function(p,...args){return original(p===inside?other:p,...args)})
+ const target=fs.realpathSync.native(inside),original=fs.openSync;let intercepted=0
+ t.mock.method(fs,'openSync',function(p,...args){if(p===target){intercepted++;return original(other,...args)}return original(p,...args)})
  assert.throws(()=>readLocalImage(inside,[root]),/变化/)
+ assert.equal(intercepted,1,'必须真的模拟过目标替换，不能因盘符或临时目录真实路径不同而漏测')
 })
 test('文章存档完整性失败不冒充保存成功；快照选择与输入顺序无关',async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'yan-store-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const store=createArticleStore({baseDir:root}),url='https://mp.weixin.qq.com/s/test',html='<h1 id="activity-name">测试</h1><a id="js_name">测试号</a><div id="js_content">正文</div>'
@@ -22,7 +23,7 @@ test('搜狗检索保留来源边界，过滤账号冒名候选，验证码不�
  const html='<ul class="news-list"><li><h3><a href="/link?url=test">测试</a></h3><a class="all-time-y2">目标号</a><span class="s2"><script>timeConvert("1789370000")</script></span></li><li><h3><a href="https://evil.example/">越界</a></h3></li></ul>'
  const r=parseSearch(html,{query:'测试',account_name:'目标号'});assert.equal(r.results.length,1);assert.equal(r.coverage.completeAccountHistory,false);assert.equal(parseSearch(html,{query:'测试',account_name:'其他号'}).results.length,0)
  assert.throws(()=>parseSearch('<body>请输入验证码</body>',{query:'测试'}),/验证/)
- const batch=await searchArticlesBatch({account_name:'目标号',queries:['目标号 AI','目标号'],max_pages:2},{fetcher:async(url)=>({buffer:Buffer.from(html),contentType:'text/html'})});assert.equal(batch.results.length,1);assert.equal(batch.results[0].sources.length,2);assert.equal(batch.coverage.completeAccountHistory,false)
+ const batch=await searchArticlesBatch({account_name:'目标号',queries:['目标号 AI','目标号'],max_pages:2},{sleep:async()=>{},fetcher:async()=>({buffer:Buffer.from(html),contentType:'text/html'})});assert.equal(batch.results.length,1);assert.equal(batch.results[0].sources.length,2);assert.equal(batch.coverage.completeAccountHistory,false)
  await assert.rejects(searchArticles({query:'测试',start_time:2,end_time:1}),/开始时间/)
 })
 test('腾讯搜索默认不联网，明确启用才签名；凭据不进入结果，非微信结果剔除',async()=>{

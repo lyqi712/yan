@@ -25,7 +25,8 @@ function imageInfo(b) {
    pos+=len
   }
  }
- if(!mimeType||!width||!height)throw new Error('不是支持的完整图片格式；加密DAT、SVG、HTML及无法识别尺寸的文件不能展示')
+ const complete=mimeType==='image/png'?b.includes('IEND')&&b.length>=45:mimeType==='image/gif'?b[b.length-1]===0x3b&&b.length>=14:mimeType==='image/webp'?b.readUInt32LE(4)+8===b.length:mimeType==='image/jpeg'?b[b.length-2]===0xff&&b[b.length-1]===0xd9:false
+ if(!mimeType||!width||!height||!complete)throw new Error('不是支持的完整图片格式；加密DAT、SVG、HTML、截断文件及无法识别尺寸的文件不能展示')
  if(width>16384||height>16384||width*height>24000000) throw new Error('图片尺寸或像素超过限制（单边16384、2400万像素）')
  return {mimeType,width,height,bytes:b.length,animated:mimeType==='image/gif'}
 }

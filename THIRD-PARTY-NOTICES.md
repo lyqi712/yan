@@ -14,7 +14,7 @@ WxLens是独立的本机聊天索引服务。眼使用原整合包4.3.0的HTTP�
 
 [Node依赖清单](docs/node-dependencies.md) 记录当前锁文件的全部依赖名称、版本、许可与来源。通过 `npm run licenses` 重新生成。源码发行包不捆绑 `node_modules`；通过npm安装时各包包含自身许可证与版权声明。
 
-主要直接依赖包括 Model Context Protocol TypeScript SDK、Zod、JSZip、yauzl、Mammoth、Cheerio、iconv-lite、chardet。许可证以各包所附文本为准，不能仅把本仓库的MIT视为全部依赖的许可。
+主要直接依赖包括 Model Context Protocol TypeScript SDK、Zod、JSZip、yauzl、Mammoth、Cheerio、Acorn、iconv-lite、chardet。Acorn 仅用于静态解析页面脚本中的字面量，不执行脚本。许可证以各包所附文本为准，不能仅把本仓库的MIT视为全部依赖的许可。
 
 ## 可选Python与系统组件
 

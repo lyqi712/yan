@@ -25,6 +25,7 @@ test('MCP图片内容是有界原生image块，加密dat/HTML/过大像素拒绝
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ZkAAAAASUVORK5CYII=','base64')
  const image=imageContent(png); assert.equal(image.type,'image'); assert.equal(image.mimeType,'image/png'); assert.deepEqual(Buffer.from(image.data,'base64'),png)
  assert.throws(()=>imageContent(Buffer.from('<html>bad</html>')), /图片|格式/)
+ assert.throws(()=>imageContent(Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61,1,0,1,0,0,0,0])), /完整|格式/)
  const large=Buffer.from(png); large.writeUInt32BE(50000,16); assert.throws(()=>imageContent(large), /像素|尺寸/)
 })
 test('本地存档排他保存与历史范围：身份/发布时间/未知时间分开，不声称完整历史', async t => {
