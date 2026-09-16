@@ -78,7 +78,9 @@ function createCandidateStore({baseDir=path.resolve(__dirname,'..','output')}={}
   const data=read(),item=data.candidates.find(x=>x.id===id)
   if(!item)throw new Error('候选不存在')
   const decision=decideVerification(item,article)
-  return update(id,{status:decision.status,articleUrl:article.url,accountName:article.account?.name,publishedAt:article.publishedAt,articleId:article.id,reason:decision.reason})
+  const patch={status:decision.status,articleUrl:article.url,publishedAt:article.publishedAt,articleId:article.id,reason:decision.reason}
+  if(decision.status==='verified'&&article.account?.name)patch.accountName=article.account.name
+  return update(id,patch)
  }
  return {upsert,list,update,verify}
 }

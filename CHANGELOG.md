@@ -3,7 +3,7 @@
 ## 4.1.3 — 2026-09-16
 
 - 新增公众号候选账本：搜索结果自动去重入库，验证码中断后保留 remaining，可按状态查询。
-- 原文抓取/导入可绑定 candidate_id；账号名一致为 verified，不一致为 conflicting，已核验状态不会被再次搜索降级。
+- 原文抓取/导入可绑定 candidate_id；账号名一致为 verified，不一致为 conflicting，已核验状态不会被再次搜索降级。冲突核验不会覆盖候选原账号名，避免第二次核验被误标为通过。
 - 文章增加 identityStatus：URL 含 biz 为 verified，仅名称或脚本 biz 为 candidate。
 
 ## 4.1.2 — 2026-09-16
