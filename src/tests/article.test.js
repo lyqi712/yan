@@ -10,7 +10,7 @@ const url = 'https://mp.weixin.qq.com/s/example'
 const html = '<h1 id="activity-name">示例文章</h1><a id="js_name">示例号</a><em id="publish_time">2026年9月14日 14:54</em><div id="js_content"><p>第一段 &amp; 证据</p><img data-src="https://mmbiz.qpic.cn/mmbiz_png/abc/640"/><p>第二段</p><script>bad()</script><img src="http://127.0.0.1/secret"/></div><script>var biz = "ABC123==";</script>'
 test('公众号解析保留图文顺序、北京时间、身份和不支持图片边界，不执行网页脚本', () => {
  const a = parseArticle(html, url)
- assert.equal(a.title,'示例文章'); assert.equal(a.account.biz,'ABC123=='); assert.equal(a.publishedAt,'2026-09-14T06:54:00.000Z')
+ assert.equal(a.title,'示例文章'); assert.equal(a.account.biz,'ABC123=='); assert.equal(a.identityStatus,'candidate'); assert.equal(a.publishedAt,'2026-09-14T06:54:00.000Z')
  assert.equal(a.images.length,1); assert.equal(a.coverage.skippedImages,1); assert.equal(a.coverage.partial,true)
  assert.ok(a.markdown.indexOf('第一段') < a.markdown.indexOf('![配图1]')); assert.ok(a.markdown.indexOf('![配图1]') < a.markdown.indexOf('第二段')); assert.ok(!a.markdown.includes('bad()'))
  assert.throws(()=>parseArticle('<div>环境异常 完成验证</div>',url), /验证|正文/)

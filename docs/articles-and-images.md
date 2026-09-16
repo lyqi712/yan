@@ -8,7 +8,8 @@
 
 ## 结果边界
 
-- `search_wechat_articles_batch` 会间隔请求并在验证码/429/403 时停止；它不支持 `days`。按天过滤请用 Unix 秒 `start_time`/`end_time`，或启用腾讯云入口。
+- `search_wechat_articles_batch` 会间隔请求并在验证码/429/403 时停止；它不支持 `days`。按天过滤请用 Unix 秒 `start_time`/`end_time`，或启用腾讯云入口。搜索结果写入 `list_article_candidates` 账本，中断后可按 `latestRun.remaining` 继续，不必依赖对话记忆。
+- 导入或抓取原文时可传 `candidate_id`。账号名一致标为 `verified`，不一致标为 `conflicting`。`verified` 只表示这次本地核验通过。
 - 文章的账号、发布时间和图片需要以文章页面核对。脚本字面量只作为可见节点缺失时的候选，并带警告；搜索索引中的名称可能同名，发布时间可能未知或只是索引时间。
 - `query_article_history` 只查询本地已获取的文章，不是公众号完整历史。
 - 图片受 MIME、magic bytes、尺寸、像素和大小限制；客户端是否展示 MCP 图片取决于客户端本身。

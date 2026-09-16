@@ -289,7 +289,7 @@ async function createServer(options = {}) {
   })
 
   registerAdvanced({ register, result, failure, server, request })
-  registerArticles({ register, result, failure, request, accountContext, store: options.articleStore })
+  registerArticles({ register, result, failure, request, accountContext, store: options.articleStore, candidateStore: options.candidateStore })
 
   if (options.connect) {
     await server.connect(new StdioServerTransport())

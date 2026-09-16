@@ -4,7 +4,7 @@
 
 眼是一个 **MCP stdio 服务**。在 Proma、Claude Desktop、Cursor、Codex 或其他支持本地 MCP 的 AI 客户端中接入后，用自然语言提出任务。眼负责读取和组织有来源的材料，你的 AI 负责理解与总结。
 
-- **37 个工具**：保留基础读取与附件功能，增加人物跨会话、多群扫描、持久关注列表、公众号多轮发现、文章正文与图片读取。
+- **39 个工具**：保留基础读取与附件功能，增加人物跨会话、多群扫描、持久关注列表、公众号多轮发现、候选账本、文章正文与图片读取。
 - **4 个工作流提示词**：聊天简报、人物提取、多群关注、议题追踪。
 - **本机只读微信**：连接已有的 WxLens 本机 HTTP 服务；不修改微信消息、不群发、不自动下载聊天附件。
 - **恢复进度**：关注批次可重试、分批读取和确认；单群失败不会把其他群的结果丢掉。
@@ -98,7 +98,7 @@ npm run config:mcp
 | 聊天总结 | `prepare_chat_summary`、`analyze_wechat_chat` | 8 类总结目标，统计、规则候选和可引用原文；由 AI 撰写总结 |
 | 还原语境 | `get_message_context`、`read_merged_forward`、`read_wechat_post` | 前后消息、合并转发索引预览、本地文章卡片 |
 | 多群关注 | `configure_watchlist`、`list_watchlists`、`poll_watchlist`、`read_watchlist_batch`、`ack_watchlist_batch` | 保存关注规则、检查新增、续扫积压、重试与确认 |
-| 公众号文章与图片 | `search_wechat_articles`、`search_wechat_articles_batch`、`search_wechat_articles_tencent`、`fetch_wechat_article`、`import_wechat_article`、`read_article_image`、`download_article_images` | 多来源候选发现、原文导入、正文解析、配图返回和下载；多轮结果去重并保留来源与失败边界 |
+| 公众号文章与图片 | `search_wechat_articles`、`search_wechat_articles_batch`、`search_wechat_articles_tencent`、`list_article_candidates`、`update_article_candidate`、`fetch_wechat_article`、`import_wechat_article`、`read_article_image`、`download_article_images` | 多来源候选发现、可恢复账本、原文核验、配图返回；候选不是完整历史 |
 | 本地附件 | `list_wechat_attachments`、`extract_wechat_attachment_text`、`search_wechat_attachment_text` | 查找文件、提取正文、按正文搜索 |
 | 证据导出 | `export_wechat_package` | 原始窗口、精选、噪声分账、附件文本、审计、SHA-256 ZIP |
 
