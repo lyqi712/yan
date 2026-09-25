@@ -7,6 +7,7 @@
 - `text_only` 现在显式标记 `contentSuppressed`、原正文长度和替换原因；`[多媒体]` 仅是输出视图，不再被误认为媒体正文已经读取。
 - 关注列表身份键优先使用会话内稳定 `localId`/`serverId`，压缩正文解码前后不再因正文表示变化产生新身份；旧状态首次升级可能需要观察一次重叠批次。
 - 增加 `npm run optional:local` 本地模式：只探测并启用工作区或本机已有的 xlrd、RapidOCR/PyMuPDF、faster-whisper 解释器，不运行 pip、不联网、不下载模型；`doctor` 按能力报告 optional/pass。
+- 损坏的 zstd 帧在 Node 22 上可能解出空缓冲，在当前 Node 24 上会解压失败。两种结果都保留原字段并标记未解码，不再把压缩十六进制当成明文。合法空帧仍标记为 `zstd-empty`。
 
 ## 4.1.5 — 2026-09-24
 
