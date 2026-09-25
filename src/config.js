@@ -4,7 +4,22 @@ const os = require('node:os')
 const { randomUUID } = require('node:crypto')
 const ROOT = path.resolve(__dirname, '..')
 const CONFIG_FILE = path.join(ROOT, '.local', 'config.json')
-const KEYS = ['baseUrl', 'accountDir', 'wxlensExe', 'requestTimeoutMs', 'autoStart']
+const KEYS = ['baseUrl', 'accountDir', 'yanExe', 'requestTimeoutMs', 'autoStart']
+
+function preferEnv(env, name) {
+  const primary = env['YAN_' + name]
+  if (primary !== undefined && primary !== '') return primary
+  const legacy = env['WXLENS_' + name]
+  if (legacy !== undefined && legacy !== '') return legacy
+  return undefined
+}
+
+function normalizeConfigInput(value) {
+  const copy = { ...value }
+  if (!copy.yanExe && copy.wxlensExe) copy.yanExe = copy.wxlensExe
+  delete copy.wxlensExe
+  return copy
+}
 
 function validateBaseUrl(value) {
   let url
@@ -16,12 +31,13 @@ function validateBaseUrl(value) {
 }
 
 function validateConfig(value) {
+  value = normalizeConfigInput(value)
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('配置必须是 JSON 对象')
   for (const key of Object.keys(value)) if (!KEYS.includes(key)) throw new Error(`不支持的配置项：${key}`)
   if (value.autoStart !== undefined && typeof value.autoStart !== 'boolean') throw new Error('autoStart必须为布尔值')
   const result = { autoStart: value.autoStart !== false, baseUrl: validateBaseUrl(value.baseUrl || 'http://127.0.0.1:5032'), requestTimeoutMs: value.requestTimeoutMs ?? 8000 }
   if (!Number.isInteger(result.requestTimeoutMs) || result.requestTimeoutMs < 500 || result.requestTimeoutMs > 30000) throw new Error('请求超时必须为 500–30000 毫秒')
-  for (const key of ['accountDir', 'wxlensExe']) {
+  for (const key of ['accountDir', 'yanExe']) {
     if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].length > 4096 || /[\x00-\x1f]/.test(value[key]))) throw new Error(`${key} 路径无效`)
     result[key] = value[key] ? path.resolve(value[key]) : ''
   }
@@ -35,11 +51,15 @@ function readConfig(options = {}) {
     try { local = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error('本地配置无法解析。请修复 .local/config.json 或备份后修复该文件。') }
   }
   const env = options.env || process.env
+  const baseUrl = preferEnv(env, 'HTTP_BASE_URL')
+  const accountDir = preferEnv(env, 'ACCOUNT_DIR')
+  const autoStart = preferEnv(env, 'AUTO_START')
+  const yanExe = preferEnv(env, 'DESKTOP_EXE')
   return validateConfig({ ...local,
-    ...(env.WXLENS_HTTP_BASE_URL ? { baseUrl: env.WXLENS_HTTP_BASE_URL } : {}),
-    ...(env.WXLENS_ACCOUNT_DIR ? { accountDir: env.WXLENS_ACCOUNT_DIR } : {}),
-    ...(env.WXLENS_AUTO_START ? { autoStart: env.WXLENS_AUTO_START !== 'false' } : {}),
-    ...(env.WXLENS_DESKTOP_EXE ? { wxlensExe: env.WXLENS_DESKTOP_EXE } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(accountDir ? { accountDir } : {}),
+    ...(autoStart !== undefined ? { autoStart: autoStart !== 'false' } : {}),
+    ...(yanExe ? { yanExe } : {}),
   })
 }
 
@@ -76,4 +96,4 @@ function renderMcpConfigs(root = ROOT, node = process.execPath) {
   }
 }
 
-module.exports = { ROOT, CONFIG_FILE, validateBaseUrl, validateConfig, readConfig, saveConfig, listAccounts, renderMcpConfigs }
+module.exports = { ROOT, CONFIG_FILE, preferEnv, validateBaseUrl, validateConfig, readConfig, saveConfig, listAccounts, renderMcpConfigs }

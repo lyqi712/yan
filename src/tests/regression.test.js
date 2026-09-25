@@ -89,7 +89,7 @@ test('目录 junction 不能让附件读取逃出白名单', async t => {
   await assert.rejects(extractLocalFile(target, [allowed]), /白名单|allowlisted/)
   assert.equal(resolveOwnedOutputDir('s', path.join(allowed, 'link', 'new'), allowed), null)
 })
-test('WxLens 的 zstd 十六进制正文会解成原文，坏载荷不会被当成明文', async () => {
+test('眼的 zstd 十六进制正文会解成原文，坏载荷不会被当成明文', async () => {
   const text = '做一张精细的SVG图片🙂'
   const hex = zstdCompressSync(Buffer.from(text, 'utf8')).toString('hex')
   const source = [{ localId: 7, timestamp: 70, type: 1, senderId: 'person-a', senderName: '我', isSelf: true, content: hex, contentTruncated: false }]
@@ -127,7 +127,7 @@ test('上游截断的zstd正文不能被精确回查标为完整', async () => {
   assert.equal(found.contentIntegrity.sourceReportedTruncated, true)
   assert.equal(found.contentIntegrity.complete, false)
 })
-test('搜索完整明文优先于被WxLens截断的精确zstd字段，同时回填身份和类型', async () => {
+test('搜索完整明文优先于被截断的精确zstd字段，同时回填身份和类型', async () => {
   const text = '长正文🙂'.repeat(900)
   const hex = zstdCompressSync(Buffer.from(text, 'utf8')).toString('hex')
   const hit = { localId: 11, timestamp: 110, sessionId: 'g', type: 0, senderId: '', content: text, contentSource: 'search-index' }

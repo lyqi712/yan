@@ -13,7 +13,7 @@ const { associateAttachments } = require('./attachment-resolver')
 const fs = require('fs')
 const path = require('path')
 
-const { createApiClient, discoverAccount } = require('./wxlens-runtime')
+const { createApiClient, discoverAccount } = require('./yan-runtime')
 const request = createApiClient()
 const { readConfig } = require('./config')
 const { diagnose } = require('./doctor')
@@ -56,7 +56,7 @@ function accountContext() {
   const discoveredAccountDir = configuredAccountDir || discoverAccount()
   const config = discoveredAccountDir ? { dbPath: discoveredAccountDir } : null
   const accountDir = resolveAccountDir(config)
-  if (!accountDir) throw new Error('WeChat account directory cannot be resolved; set WXLENS_ACCOUNT_DIR to the local wxid account folder')
+  if (!accountDir) throw new Error('WeChat account directory cannot be resolved; set YAN_ACCOUNT_DIR to the local wxid account folder')
   const roots = getAllowedRoots(accountDir)
   if (!roots.length) throw new Error('No allowlisted local WeChat content roots found')
   return { accountDir: accountDir.replace(/\\/g, '/'), roots }
@@ -133,7 +133,7 @@ async function createServer(options = {}) {
     } catch (e) { return failure(e) }
   })
 
-  register('get_message_by_id', '按单个会话和稳定localId有界回查WxLens提供的content字段；不做眼侧字符截断，可用nextOffset续读。', {
+  register('get_message_by_id', '按单个会话和稳定localId有界回查眼提供的content字段；不做字符截断，可用nextOffset续读。', {
     session_id: z.string().min(1), local_id: z.number().int().positive(), scan_limit: z.number().int().positive().max(20000).optional(), page_size: z.number().int().positive().max(100).optional(), offset: z.number().int().nonnegative().optional(),
   }, async params => {
     try { return result(await findMessageById(page => request('/api/messages', page), params)) } catch (error) { return failure(error) }
@@ -171,7 +171,7 @@ async function createServer(options = {}) {
       const contentIntegrity = { ...(best.contentIntegrity || contentIntegrityOf(best)), source: best.contentSource || 'unknown' }
       const sourceIsExact = ['exact-message', 'session-message'].includes(best.contentSource)
       return result({
-        found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? 'WxLens /api/messages exact lookup' : 'WxLens exact lookup plus searchable message index',
+        found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? '眼 /api/messages exact lookup' : '眼 exact lookup plus searchable message index',
         completeness: sourceIsExact ? 'source-message-content' : 'indexed-preview', completeOriginal: false,
         contentIntegrity, parsed: parseMergedForwardSnippet(content), rawHit: best, queries, variantsFound: variants.length, directLookup: direct,
         boundary: '已按正文完整性和来源选择最可读的单条消息content；合并转发内部媒体、未入本地索引的嵌套消息和原始数据库结构仍不能据此宣称完整。',
@@ -192,7 +192,7 @@ async function createServer(options = {}) {
       const urls = [...new Set(content.match(/https?:\/\/[^\s<>"']+/g) || [])]
       const contentIntegrity = { ...(best.contentIntegrity || contentIntegrityOf(best)), source: best.contentSource || 'unknown' }
       const sourceIsExact = ['exact-message', 'session-message'].includes(best.contentSource)
-      return result({ found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? 'WxLens /api/messages exact lookup' : 'WxLens exact lookup plus searchable message index', completeness: sourceIsExact ? 'source-message-content' : 'indexed-preview', content, urls, rawHit: best, variantsFound: variants.length, directLookup: direct, contentIntegrity, boundary: '已按正文完整性和来源选择最可读的单条消息content；这里只读取本地索引正文，不自动抓取外部URL页面。' })
+      return result({ found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? '眼 /api/messages exact lookup' : '眼 exact lookup plus searchable message index', completeness: sourceIsExact ? 'source-message-content' : 'indexed-preview', content, urls, rawHit: best, variantsFound: variants.length, directLookup: direct, contentIntegrity, boundary: '已按正文完整性和来源选择最可读的单条消息content；这里只读取本地索引正文，不自动抓取外部URL页面。' })
     } catch (e) { return failure(e) }
   })
 
@@ -291,12 +291,12 @@ async function createServer(options = {}) {
         parsers: getParserCapabilities(),
         capabilities: ['text chat', '5000-message paginated read', 'bounded merged search context windows', 'quality-gated evidence-linked classification', 'message-function labels', 'question-response-resolution context threads', 'evidence-linked decision-task-risk-result work register', 'merged-forward indexed preview', 'post/article indexed text', 'multi-format local attachment extraction', 'image OCR', 'local timed ASR and keyframe OCR', 'portable audited ZIP export'],
         safety: { wechatDatabaseWrites: false, privateProtocol: false, automaticAccountDownload: false, processInjection: false, networkArticleFetch: true },
-        limitations: ['Yan does not slice individual chat message text, but it preserves and surfaces WxLens truncation/length/decode status; exact lookup returns partial when the source is incomplete. A WxLens HTTP response over 16MiB or a watchlist batch over 16MiB fails the whole operation instead of dropping text.', 'Keyword search uses the upstream index and returns at most 50 hits per call. Hits missing sender, type or complete-content metadata are filled from the same localId within a bounded session scan; exact reads use session pagination and get_message_by_id. Zstd hex text beginning with 28b52ffd is decoded to UTF-8, and undecodable payloads stay marked instead of being treated as plain text. Image, emoji, and file rows stay placeholders when WxLens supplies no local path; encrypted DAT files are not decrypted.', 'text_only is an explicit presentation mode: non-text content becomes [多媒体] with contentSuppressed=true and is not evidence that the media body was read.', 'Article history covers collected URLs only, not complete account history. Parsed article text is kept in full, but HTML over 4MiB or an archive over 8MiB fails instead of saving a partial body. Public HTTP may require browser verification; import an explicitly opened page without cookies.', 'Search-result titles and excerpts are index snippets, not article bodies.', 'MCP image content requires client/model image support; encrypted DAT images are unsupported. Returned images are capped at 4MiB.', 'Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first. Attachment listing and content search expose coverage, parser failures and tail continuation; an incomplete coverage result cannot be interpreted as a complete no-match.', 'Markdown digests excerpt evidence for display; structured analysis JSON keeps the original message content.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
+        limitations: ['Yan does not slice individual chat message text, but it preserves and surfaces local-index truncation/length/decode status; exact lookup returns partial when the source is incomplete. A local HTTP response over 16MiB or a watchlist batch over 16MiB fails the whole operation instead of dropping text.', 'Keyword search uses the upstream index and returns at most 50 hits per call. Hits missing sender, type or complete-content metadata are filled from the same localId within a bounded session scan; exact reads use session pagination and get_message_by_id. Zstd hex text beginning with 28b52ffd is decoded to UTF-8, and undecodable payloads stay marked instead of being treated as plain text. Image, emoji, and file rows stay placeholders when the local index supplies no path; encrypted DAT files are not decrypted.', 'text_only is an explicit presentation mode: non-text content becomes [多媒体] with contentSuppressed=true and is not evidence that the media body was read.', 'Article history covers collected URLs only, not complete account history. Parsed article text is kept in full, but HTML over 4MiB or an archive over 8MiB fails instead of saving a partial body. Public HTTP may require browser verification; import an explicitly opened page without cookies.', 'Search-result titles and excerpts are index snippets, not article bodies.', 'MCP image content requires client/model image support; encrypted DAT images are unsupported. Returned images are capped at 4MiB.', 'Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first. Attachment listing and content search expose coverage, parser failures and tail continuation; an incomplete coverage result cannot be interpreted as a complete no-match.', 'Markdown digests excerpt evidence for display; structured analysis JSON keeps the original message content.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
       })
     } catch (e) { return failure(e) }
   })
 
-  register('yan_diagnose', '检查眼的配置、WxLens连接与可选解析器；即使没有打开微信也可运行。', {}, async () => {
+  register('yan_diagnose', '检查眼的配置、本机服务连接与可选解析器；即使没有打开微信也可运行。', {}, async () => {
     try { return result(await diagnose()) } catch (error) { return failure(error) }
   })
 

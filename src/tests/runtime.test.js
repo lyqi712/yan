@@ -5,13 +5,23 @@ const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const { createApiClient, launchDesktop, discoverWxlens } = require('../wxlens-runtime')
+const { createApiClient, launchDesktop, discoverYan } = require('../yan-runtime')
+const { validateConfig, readConfig } = require('../config')
 const { verifyInstaller } = require('../setup')
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js')
 const unreachable = () => Object.assign(new Error('fixture offline'), { code: 'WXLENS_UNREACHABLE' })
 
-test('MCP并发首次查询只启动一次WxLens，之后复用现有服务', async () => {
+test('旧的程序路径配置和环境变量仍然生效，新的 YAN_* 优先', () => {
+  const migrated = validateConfig({ wxlensExe: 'C:/Synthetic Folder/WxLens.exe' })
+  assert.equal(migrated.yanExe, path.resolve('C:/Synthetic Folder/WxLens.exe'))
+  assert.equal(migrated.wxlensExe, undefined)
+  const fromEnv = readConfig({ file: path.join(os.tmpdir(), 'yan-missing-config-rename.json'), env: { YAN_HTTP_BASE_URL: 'http://127.0.0.1:5032', WXLENS_HTTP_BASE_URL: 'http://127.0.0.1:5999', YAN_AUTO_START: 'false', WXLENS_DESKTOP_EXE: 'C:/Synthetic Folder/WxLens.exe' } })
+  assert.equal(fromEnv.baseUrl, 'http://127.0.0.1:5032')
+  assert.equal(fromEnv.autoStart, false)
+  assert.equal(fromEnv.yanExe, path.resolve('C:/Synthetic Folder/WxLens.exe'))
+})
+test('MCP并发首次查询只启动一次眼，之后复用现有服务', async () => {
   let ready = false, starts = 0
   const client = createApiClient({ readConfig: () => ({ autoStart: true }), discover: () => 'fixture/WxLens.exe', launch: async (_exe, background) => { assert.equal(background, true); starts++; await new Promise(r => setTimeout(r, 5)); ready = true }, request: async (api, params) => { if (!ready) throw unreachable(); return { api, params } } })
   const results = await Promise.all([client('/api/sessions', { kind: 'group' }), client('/api/messages', { session_id: 'g' })])
@@ -37,7 +47,8 @@ test('启动器不拼接shell命令、不继承Electron Node开关；自定义�
   await assert.rejects(launchDesktop('missing', true, () => { const c = new EventEmitter(); queueMicrotask(() => c.emit('error', new Error('fixture'))); return c }), /启动失败/)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yan-launch-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const file = path.join(root, 'WxLens.exe'); fs.writeFileSync(file, 'synthetic, never executed')
-  assert.equal(discoverWxlens({ wxlensExe: file }), file)
+  assert.equal(discoverYan({ wxlensExe: file }), file)
+  assert.equal(discoverYan({ yanExe: file }), file)
   await assert.rejects(verifyInstaller(file), /大小不匹配/)
 })
 test('实际MCP在上游离线时仍握手和发现工具，查询给出可读失败', { timeout: 15000 }, async t => {
@@ -46,5 +57,5 @@ test('实际MCP在上游离线时仍握手和发现工具，查询给出可读�
   const client = new Client({ name: 'yan-offline-fixture', version: '1.0.0' }); t.after(() => client.close())
   await client.connect(transport); assert.equal((await client.listTools()).tools.length, 40)
   const guide = await client.callTool({ name: 'yan_usage_guide', arguments: {} }); assert.notEqual(guide.isError, true)
-  const result = await client.callTool({ name: 'list_sessions', arguments: { limit: 1 } }); assert.equal(result.isError, true); assert.match(result.content[0].text, /WxLens/)
+  const result = await client.callTool({ name: 'list_sessions', arguments: { limit: 1 } }); assert.equal(result.isError, true); assert.match(result.content[0].text, /眼/)
 })

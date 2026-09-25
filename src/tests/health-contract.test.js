@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const http = require('node:http')
 const { request } = require('../http-client')
 
-test('兼容真实WxLens健康接口status格式，但业务接口仍要求ok封装', async t => {
+test('兼容眼的健康接口status格式，但业务接口仍要求ok封装', async t => {
   const server = http.createServer((_req, res) => {
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify({ status: 'ok' }))

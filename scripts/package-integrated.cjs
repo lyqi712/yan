@@ -5,7 +5,7 @@ const { pipeline } = require('node:stream/promises')
 const JSZip = require('jszip')
 const yauzl = require('yauzl')
 const { build } = require('./package.cjs')
-const { verifyInstaller, INSTALLER } = require('../src/setup')
+const { verifyInstaller, installerFile, INSTALLER } = require('../src/setup')
 const ROOT = path.resolve(__dirname, '..')
 async function digest(file) {
   const hash = crypto.createHash('sha256')
@@ -36,7 +36,7 @@ async function verify(file, expected) {
   })
 }
 async function integrated() {
-  const installer = path.join(ROOT, 'vendor', INSTALLER.name)
+  const installer = installerFile(ROOT)
   await verifyInstaller(installer)
   const source = await build(ROOT), zip = await JSZip.loadAsync(fs.readFileSync(source.file))
   const lines = (await zip.file('yan/checksums.sha256').async('text')).trim().split('\n')

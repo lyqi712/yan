@@ -140,7 +140,7 @@ test('分析结果保留长消息原文，摘录截断显式标记', () => {
   assert.equal(synthesis.selectedMessages[0].content, content)
   assert.equal(synthesis.noiseMessages[0].excerptTruncated, true)
 })
-test('关注批次保留WxLens的truncated标记，不把部分正文当完整', async t => {
+test('关注批次保留上游的truncated标记，不把部分正文当完整', async t => {
   const groups = { g: [{ ...row(1, 'a', 1, '部分正文'), truncated: true, originalLength: 200 }] }
   const { store, request } = setup(t, groups)
   await store.configure({ id: 'truncated', session_ids: ['g'] })

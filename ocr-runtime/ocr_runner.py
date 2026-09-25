@@ -6,6 +6,14 @@ import tempfile
 from pathlib import Path
 
 
+def yan_env(name, default=None):
+    for prefix in ('YAN_', 'WXLENS_'):
+        value = os.environ.get(prefix + name)
+        if value:
+            return value
+    return default
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', required=True)
@@ -23,7 +31,7 @@ def main():
     def run_ocr(image, page):
         nonlocal engine, ocr_used
         if engine is None:
-            model_dir = Path(os.environ.get('WXLENS_OCR_MODEL_DIR', str(Path(__file__).parent / 'models')))
+            model_dir = Path(yan_env('OCR_MODEL_DIR', str(Path(__file__).parent / 'models')))
             required = {name: model_dir / name for name in ['det.onnx', 'rec.onnx', 'cls.onnx', 'keys.txt']}
             if not all(p.is_file() for p in required.values()):
                 raise RuntimeError('OCR模型未就绪，请按docs/optional-runtime.md手动准备det.onnx、rec.onnx、cls.onnx和keys.txt。读取时不自动下载模型。')
@@ -41,7 +49,7 @@ def main():
         import pymupdf
         with pymupdf.open(source) as document:
             page_count = document.page_count
-            maximum = min(max(int(os.environ.get('WXLENS_PDF_MAX_PAGES', '200')), 1), 500)
+            maximum = min(max(int(yan_env('PDF_MAX_PAGES', '200')), 1), 500)
             with tempfile.TemporaryDirectory(prefix='yan-pdf-') as temporary:
                 for index in range(min(page_count, maximum)):
                     page = document[index]

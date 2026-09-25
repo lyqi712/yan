@@ -8,6 +8,14 @@ import tempfile
 from pathlib import Path
 
 
+def yan_env(name, default=None):
+    for prefix in ('YAN_', 'WXLENS_'):
+        value = os.environ.get(prefix + name)
+        if value:
+            return value
+    return default
+
+
 def run_json(command):
     result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=60)
     if result.returncode != 0:
@@ -32,7 +40,7 @@ def as_list(value):
 
 
 def build_ocr_engine():
-    model_dir = Path(os.environ.get('WXLENS_OCR_MODEL_DIR', str(Path(__file__).parent / 'models')))
+    model_dir = Path(yan_env('OCR_MODEL_DIR', str(Path(__file__).parent / 'models')))
     required = {name: model_dir / name for name in ['det.onnx', 'rec.onnx', 'cls.onnx', 'keys.txt']}
     if not all(p.is_file() for p in required.values()):
         raise RuntimeError('本地OCR模型缺失，未自动下载；详见docs/optional-runtime.md')
@@ -53,12 +61,12 @@ def transcribe(source, duration):
         from faster_whisper import WhisperModel
     except ImportError:
         return {"available": False, "engine": "faster-whisper", "segments": [], "language": None, "warning": "faster-whisper is not installed; speech transcription was skipped."}
-    model_name = os.environ.get("WXLENS_ASR_MODEL", "small")
-    device = os.environ.get("WXLENS_ASR_DEVICE", "cpu")
-    compute_type = os.environ.get("WXLENS_ASR_COMPUTE_TYPE", "int8" if device == "cpu" else "float16")
+    model_name = yan_env("ASR_MODEL", "small")
+    device = yan_env("ASR_DEVICE", "cpu")
+    compute_type = yan_env("ASR_COMPUTE_TYPE", "int8" if device == "cpu" else "float16")
     try:
-        model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=os.environ.get("WXLENS_ASR_MODEL_DIR") or None, local_files_only=True)
-        segments, info = model.transcribe(str(source), language=os.environ.get("WXLENS_ASR_LANGUAGE") or None, vad_filter=True, beam_size=5)
+        model = WhisperModel(model_name, device=device, compute_type=compute_type, download_root=yan_env("ASR_MODEL_DIR") or None, local_files_only=True)
+        segments, info = model.transcribe(str(source), language=yan_env("ASR_LANGUAGE") or None, vad_filter=True, beam_size=5)
     except Exception as exc:
         return {"available": False, "engine": "faster-whisper", "model": model_name, "segments": [], "language": None, "warning": f"Speech transcription unavailable: {type(exc).__name__}: {exc}"}
     rows = []
@@ -70,8 +78,8 @@ def transcribe(source, duration):
 
 
 def extract_visual_timeline(source, duration, engine):
-    max_frames = max(3, min(int(os.environ.get("WXLENS_VIDEO_MAX_KEYFRAMES", "24")), 60))
-    interval = max(float(os.environ.get("WXLENS_VIDEO_FRAME_INTERVAL_SECONDS", "15")), 1.0)
+    max_frames = max(3, min(int(yan_env("VIDEO_MAX_KEYFRAMES", "24")), 60))
+    interval = max(float(yan_env("VIDEO_FRAME_INTERVAL_SECONDS", "15")), 1.0)
     wanted = max(3, min(max_frames, int(math.ceil(duration / interval)) + 1)) if duration > 0 else 3
     if wanted == 1 or duration <= 0:
         times = [0.0]

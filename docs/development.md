@@ -9,7 +9,7 @@
 - `src/record-pipeline.js`：有界分页、上下文、增量与规则候选。
 - `src/content-tools.js`、`bounded-zip.js`、`path-safety.js`：附件解析和访问限制。
 - `src/config.js`、`http-client.js`、`doctor.js`：共享配置、HTTP和诊断。
-- `src/wxlens-runtime.js`、`src/setup.js`：发现/后台启动WxLens与首次交互式安装、初始化引导。
+- `src/yan-runtime.js`、`src/setup.js`：发现/后台启动眼与首次交互式安装、初始化引导。
 - `src/cli.js`：配置、诊断、MCP、首次设置与显式轮询。
 - `src/tests/`：合成回归与实际协议集成测试。
 - `scripts/`：语法检查、依赖许可、白名单打包。
@@ -25,7 +25,7 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 npm run package:product
 ```
 
-测试不需要真实账号或WxLens安装。集成测试启动短生命周期回环HTTP服务，再通过MCP SDK Client启动真实stdio子进程，检查工具、schema、prompt、resource和调用结果。监控测试覆盖大于5000条积压、追赶期间新增、同秒跨页、同名人物、空群基线、分页拒绝跳读、并发锁和超大UTF-8状态。
+测试不需要真实账号或眼的安装程序。集成测试启动短生命周期回环HTTP服务，再通过MCP SDK Client启动真实stdio子进程，检查工具、schema、prompt、resource和调用结果。监控测试覆盖大于5000条积压、追赶期间新增、同秒跨页、同名人物、空群基线、分页拒绝跳读、并发锁和超大UTF-8状态。
 
 `npm run check`检查JavaScript语法与发行必需项。Python脚本语法可单独验证：
 
@@ -33,7 +33,7 @@ npm run package:product
 python -m compileall -q ocr-runtime
 ```
 
-Python语法通过不代表可选依赖、模型或真实OCR/ASR通过。真实Windows新机、实际WxLens版本、账号索引顺序及多平台外部程序分别验收。
+Python语法通过不代表可选依赖、模型或真实OCR/ASR通过。真实Windows新机、实际本机程序版本、账号索引顺序及多平台外部程序分别验收。
 
 ## 源码发行
 
@@ -41,7 +41,7 @@ Python语法通过不代表可选依赖、模型或真实OCR/ASR通过。真实W
 
 打包后重读ZIP，逐文件验证SHA-256，同时检查CRC32。产物为`dist/yan-v<package.json版本>-source.zip`及独立`.sha256`。不要把测试生成的聊天证据ZIP当作源码包发布。
 
-具备原WxLens安装器时，可运行 `npm run package:integrated` 生成Windows整合ZIP。该命令先核验固定安装器哈希，再流式打包，最后逐文件重读验证SHA-256；不会执行安装器。源码版与整合版区别见第三方说明。
+具备眼的安装器时，可运行 `npm run package:integrated` 生成Windows整合ZIP。该命令先核验固定安装器哈希，再放进 `vendor/yan-4.3.0-Setup.exe`，最后逐文件重读验证SHA-256；不会执行安装器。源码版与整合版区别见第三方说明。
 
 CI执行Windows/Linux、Node22/24矩阵测试和打包。远端结果应在GitHub Actions中查看，不能用本地测试替代未运行的CI结果。
 

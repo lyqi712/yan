@@ -7,9 +7,9 @@ function option(args, key, fallback) { const i = args.indexOf('--' + key); if (i
 async function main() {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('眼需要 Node.js 22 或更高版本，请先升级 Node.js。')
   const args = process.argv.slice(2), command = args[0] || 'help'
-  if (['help', '--help', '-h'].includes(command)) { console.log(`眼 · MCP 微信信息助手\n\nnode src/cli.js setup                WxLens首次安装与初始化引导\nnode src/cli.js mcp                  MCP stdio 服务\nnode src/cli.js doctor               连接与可选能力诊断\nnode src/cli.js optional-local      只探测本机已有可选解析器，不联网安装\nnode src/cli.js config --base-url http://127.0.0.1:5032 [--account-dir 路径] [--wxlens-exe 程序路径]\nnode src/cli.js mcp-config [--client json|codex|proma]\nnode src/cli.js watch 列表ID [--interval 60] [--runs 1]\n\nwatch 默认运行一轮，--runs 0 明确持续运行；每轮结果保存到本机.local/receipts后确认批次。\n完整使用方式见 README.md 和 docs/monitoring.md。`); return }
+  if (['help', '--help', '-h'].includes(command)) { console.log(`眼 · MCP 微信信息助手\n\nnode src/cli.js setup                眼的首次安装与初始化引导\nnode src/cli.js mcp                  MCP stdio 服务\nnode src/cli.js doctor               连接与可选能力诊断\nnode src/cli.js optional-local      只探测本机已有可选解析器，不联网安装\nnode src/cli.js config --base-url http://127.0.0.1:5032 [--account-dir 路径] [--yan-exe 程序路径]\nnode src/cli.js mcp-config [--client json|codex|proma]\nnode src/cli.js watch 列表ID [--interval 60] [--runs 1]\n\nwatch 默认运行一轮，--runs 0 明确持续运行；每轮结果保存到本机.local/receipts后确认批次。\n完整使用方式见 README.md 和 docs/monitoring.md。`); return }
   if (command === 'mcp-config') { const name = option(args, 'client', 'json'); const configs = renderMcpConfigs(); if (!configs[name]) throw new Error('client 只能是 json、codex、proma'); console.log(configs[name]); return }
-  if (command === 'config') { const current = readConfig(); const saved = saveConfig({ ...current, baseUrl: option(args, 'base-url', current.baseUrl), accountDir: option(args, 'account-dir', current.accountDir), wxlensExe: option(args, 'wxlens-exe', current.wxlensExe) }); console.log('配置已保存到 .local/config.json。环境变量 WXLENS_* 如已设置，会优先于本地配置。'); return }
+  if (command === 'config') { const current = readConfig(); const saved = saveConfig({ ...current, baseUrl: option(args, 'base-url', current.baseUrl), accountDir: option(args, 'account-dir', current.accountDir), yanExe: option(args, 'yan-exe', option(args, 'wxlens-exe', current.yanExe)) }); console.log('配置已保存到 .local/config.json。环境变量 YAN_* 如已设置，会优先于本地配置。'); return }
   if (command === 'optional-local') { console.log(JSON.stringify(require('./optional-runtime').localOnlyInstall(), null, 2)); return }
   if (command === 'mcp') { await require('./server').createServer({ connect: true }); return }
   if (command === 'doctor') { const report = await require('./doctor').diagnose(); console.log(JSON.stringify(report, null, 2)); process.exitCode = report.ok ? 0 : 1; return }
@@ -18,7 +18,7 @@ async function main() {
     const id = args[1]; if (!id || id.startsWith('--')) throw new Error('请提供已创建的关注列表ID')
     const interval = Number(option(args, 'interval', '60')), runs = Number(option(args, 'runs', '1'))
     if (!Number.isInteger(interval) || interval < 30 || interval > 86400 || !Number.isInteger(runs) || runs < 0 || runs > 10000) throw new Error('interval为30–86400秒；runs为0–10000（0表示持续）')
-    const { createWatchStore } = require('./watchlists'), { createApiClient } = require('./wxlens-runtime'); const request = createApiClient(); const store = createWatchStore()
+    const { createWatchStore } = require('./watchlists'), { createApiClient } = require('./yan-runtime'); const request = createApiClient(); const store = createWatchStore()
     let stopped = false, wake
     process.on('SIGINT', () => { stopped = true; wake?.() })
     for (let i = 0; !stopped && (runs === 0 || i < runs); i += 1) {

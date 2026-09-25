@@ -10,6 +10,8 @@ const chardet = require('chardet')
 const { withinRoots } = require('./path-safety')
 const { loadBoundedZip, validateArchive } = require('./bounded-zip')
 const { runtimePath, pythonModuleAvailable, runtimeStatus } = require('./optional-runtime')
+const { preferEnv } = require('./config')
+function fromEnv(name) { return preferEnv(process.env, name) }
 
 const DEFAULT_MAX_TEXT = 200000
 const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.jsonl', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml', '.html', '.htm', '.log', '.rtf', '.srt', '.vtt'])
@@ -215,34 +217,34 @@ function extractDoc(filePath) {
   if (result.status !== 0) throw new Error(`antiword failed: ${String(result.stderr || '').trim()}`)
   return { text: String(result.stdout || '').trim(), coverage: {}, parser: 'antiword' }
 }
-const OCR_ROOT = path.resolve(process.env.WXLENS_OCR_ROOT || path.join(__dirname, '..', 'ocr-runtime'))
+const OCR_ROOT = path.resolve(fromEnv('OCR_ROOT') || path.join(__dirname, '..', 'ocr-runtime'))
 const DEFAULT_PYTHON = path.join(OCR_ROOT, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']))
-const OCR_PYTHON = process.env.WXLENS_OCR_PYTHON || runtimePath('ocr', DEFAULT_PYTHON)
-const OCR_SCRIPT = process.env.WXLENS_OCR_SCRIPT || path.join(OCR_ROOT, 'ocr_runner.py')
-const XLS_PYTHON = process.env.WXLENS_XLS_PYTHON || runtimePath('xls', DEFAULT_PYTHON) || OCR_PYTHON
-const XLS_SCRIPT = process.env.WXLENS_XLS_SCRIPT || path.join(OCR_ROOT, 'xls_runner.py')
-function legacyXlsAvailable() { return fs.existsSync(process.env.WXLENS_XLS_PYTHON || XLS_PYTHON) && fs.existsSync(process.env.WXLENS_XLS_SCRIPT || XLS_SCRIPT) && pythonModuleAvailable(process.env.WXLENS_XLS_PYTHON || XLS_PYTHON, 'xlrd') }
+const OCR_PYTHON = fromEnv('OCR_PYTHON') || runtimePath('ocr', DEFAULT_PYTHON)
+const OCR_SCRIPT = fromEnv('OCR_SCRIPT') || path.join(OCR_ROOT, 'ocr_runner.py')
+const XLS_PYTHON = fromEnv('XLS_PYTHON') || runtimePath('xls', DEFAULT_PYTHON) || OCR_PYTHON
+const XLS_SCRIPT = fromEnv('XLS_SCRIPT') || path.join(OCR_ROOT, 'xls_runner.py')
+function legacyXlsAvailable() { return fs.existsSync(fromEnv('XLS_PYTHON') || XLS_PYTHON) && fs.existsSync(fromEnv('XLS_SCRIPT') || XLS_SCRIPT) && pythonModuleAvailable(fromEnv('XLS_PYTHON') || XLS_PYTHON, 'xlrd') }
 function extractLegacyXls(filePath) {
-  const python = process.env.WXLENS_XLS_PYTHON || XLS_PYTHON
-  const script = process.env.WXLENS_XLS_SCRIPT || XLS_SCRIPT
+  const python = fromEnv('XLS_PYTHON') || XLS_PYTHON
+  const script = fromEnv('XLS_SCRIPT') || XLS_SCRIPT
   if (!fs.existsSync(python) || !fs.existsSync(script)) throw new Error('Legacy XLS parser unavailable: see docs/optional-runtime.md to install the optional xlrd runtime')
-  const result = spawnSync(python, [script, '--input', filePath, '--json'], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, windowsHide: true, timeout: Math.min(Math.max(Number(process.env.WXLENS_XLS_TIMEOUT_MS) || 120000, 10000), 300000), env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
+  const result = spawnSync(python, [script, '--input', filePath, '--json'], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, windowsHide: true, timeout: Math.min(Math.max(Number(fromEnv('XLS_TIMEOUT_MS')) || 120000, 10000), 300000), env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
   if (result.error) throw new Error(`Legacy XLS parser launch failed: ${result.error.message}`)
   if (result.status !== 0) throw new Error(`Legacy XLS parser failed: ${String(result.stderr || result.stdout || '').trim()}`)
   let payload; try { payload = JSON.parse(String(result.stdout || '').trim()) } catch { throw new Error('Legacy XLS parser returned invalid JSON') }
   return { text: String(payload.text || '').trim(), coverage: payload.coverage || {}, parser: payload.parser || 'xlrd-safe-legacy-xls', warnings: payload.warnings || [] }
 }
 function highAccuracyOcrAvailable() {
-  const python = process.env.WXLENS_OCR_PYTHON || OCR_PYTHON
-  return fs.existsSync(python) && fs.existsSync(process.env.WXLENS_OCR_SCRIPT || OCR_SCRIPT) && pythonModuleAvailable(python, ['rapidocr', 'pymupdf'])
+  const python = fromEnv('OCR_PYTHON') || OCR_PYTHON
+  return fs.existsSync(python) && fs.existsSync(fromEnv('OCR_SCRIPT') || OCR_SCRIPT) && pythonModuleAvailable(python, ['rapidocr', 'pymupdf'])
 }
 function extractImage(filePath) {
-  const python = process.env.WXLENS_OCR_PYTHON || OCR_PYTHON
-  const script = process.env.WXLENS_OCR_SCRIPT || OCR_SCRIPT
+  const python = fromEnv('OCR_PYTHON') || OCR_PYTHON
+  const script = fromEnv('OCR_SCRIPT') || OCR_SCRIPT
   if (!fs.existsSync(python) || !fs.existsSync(script)) throw new Error('High-accuracy OCR unavailable: isolated RapidOCR runtime not found')
   const result = spawnSync(python, [script, '--input', filePath, '--json'], {
     encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, windowsHide: true,
-    timeout: Math.min(Math.max(Number(process.env.WXLENS_OCR_TIMEOUT_MS) || 300000, 10000), 900000),
+    timeout: Math.min(Math.max(Number(fromEnv('OCR_TIMEOUT_MS')) || 300000, 10000), 900000),
     env: { ...process.env, PYTHONIOENCODING: 'utf-8', PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True' },
   })
   if (result.error) throw new Error(`RapidOCR launch failed: ${result.error.message}`)
@@ -255,17 +257,17 @@ function extractImage(filePath) {
     parser: payload.parser || 'rapidocr-local-models', warnings: payload.warnings || [], metadata: payload.metadata,
   }
 }
-const MEDIA_PYTHON = process.env.WXLENS_MEDIA_PYTHON || runtimePath('media', OCR_PYTHON)
-const MEDIA_SCRIPT = process.env.WXLENS_MEDIA_SCRIPT || path.join(OCR_ROOT, 'media_runner.py')
+const MEDIA_PYTHON = fromEnv('MEDIA_PYTHON') || runtimePath('media', OCR_PYTHON)
+const MEDIA_SCRIPT = fromEnv('MEDIA_SCRIPT') || path.join(OCR_ROOT, 'media_runner.py')
 function mediaDeepReaderAvailable() {
-  const python = process.env.WXLENS_MEDIA_PYTHON || MEDIA_PYTHON
-  return fs.existsSync(python) && fs.existsSync(process.env.WXLENS_MEDIA_SCRIPT || MEDIA_SCRIPT) && pythonModuleAvailable(python, 'faster_whisper')
+  const python = fromEnv('MEDIA_PYTHON') || MEDIA_PYTHON
+  return fs.existsSync(python) && fs.existsSync(fromEnv('MEDIA_SCRIPT') || MEDIA_SCRIPT) && pythonModuleAvailable(python, 'faster_whisper')
 }
 function extractMedia(filePath) {
   if (!commandExists('ffprobe')) throw new Error('Media parser unavailable: ffprobe not found')
   if (mediaDeepReaderAvailable()) {
-    const python = process.env.WXLENS_MEDIA_PYTHON || MEDIA_PYTHON; const script = process.env.WXLENS_MEDIA_SCRIPT || MEDIA_SCRIPT
-    const result = spawnSync(python, [script, '--input', filePath, '--json'], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, windowsHide: true, timeout: Math.min(Math.max(Number(process.env.WXLENS_MEDIA_TIMEOUT_MS) || 900000, 30000), 3600000), env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
+    const python = fromEnv('MEDIA_PYTHON') || MEDIA_PYTHON; const script = fromEnv('MEDIA_SCRIPT') || MEDIA_SCRIPT
+    const result = spawnSync(python, [script, '--input', filePath, '--json'], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024, windowsHide: true, timeout: Math.min(Math.max(Number(fromEnv('MEDIA_TIMEOUT_MS')) || 900000, 30000), 3600000), env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
     if (result.error) throw new Error(`Media deep reader launch failed: ${result.error.message}`)
     if (result.status !== 0) throw new Error(`Media deep reader failed: ${String(result.stderr || result.stdout || '').trim()}`)
     let payload; try { payload = JSON.parse(String(result.stdout || '').trim()) } catch { throw new Error('Media deep reader returned invalid JSON') }

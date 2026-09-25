@@ -4,7 +4,7 @@
 
 ## 按需安装
 
-建议使用 Python 3.11 的独立虚拟环境。以下命令会从 PyPI 下载第三方依赖，只有你明确需要相关能力时再执行。眼的基础安装脚本不会执行这些命令，也不会因为可选解析器缺失而下载依赖。若本机已经有合适的 Python 环境和模块，可先运行 `npm run optional:local`：它只探测 `ocr-runtime/.venv`、已配置的 `WXLENS_*_PYTHON`、Windows `py -3.11` 或 PATH 中的 Python，写入 `.local/optional-runtime.json` 供眼后续使用；不会运行 `pip`、联网、下载模型或改变系统 Python。探测不到的能力继续保持 `optional`，不会伪装成已安装。
+建议使用 Python 3.11 的独立虚拟环境。以下命令会从 PyPI 下载第三方依赖，只有你明确需要相关能力时再执行。眼的基础安装脚本不会执行这些命令，也不会因为可选解析器缺失而下载依赖。若本机已经有合适的 Python 环境和模块，可先运行 `npm run optional:local`：它只探测 `ocr-runtime/.venv`、已配置的 `YAN_*_PYTHON`、Windows `py -3.11` 或 PATH 中的 Python，写入 `.local/optional-runtime.json` 供眼后续使用；不会运行 `pip`、联网、下载模型或改变系统 Python。探测不到的能力继续保持 `optional`，不会伪装成已安装。
 
 Windows：
 
@@ -26,7 +26,7 @@ ocr-runtime/.venv/bin/python -m pip install -r ocr-runtime/requirements-ocr.txt
 
 ## OCR模型需手动准备
 
-在 `ocr-runtime/models/`（或 `WXLENS_OCR_MODEL_DIR` 指定目录）准备与你选择的 RapidOCR 模型配套的文件：
+在 `ocr-runtime/models/`（或 `YAN_OCR_MODEL_DIR` 指定目录）准备与你选择的 RapidOCR 模型配套的文件：
 
 ```text
 models/
@@ -38,27 +38,27 @@ models/
 
 检测、识别、方向分类与字符表必须互相匹配，文件名不代表任意模型可通用。请从相应模型作者的合法来源下载，并遵守其许可。代码在调用 RapidOCR 前检查这些文件；缺失时不自动下载模型。
 
-PDF 优先逐页读取原生文本；没有文本的页面再做 OCR。混合 PDF 不会因为某一页有文本，就直接跳过其他扫描页。默认最多处理前200页，可通过 `WXLENS_PDF_MAX_PAGES` 调整至1–500页，输出包含总页数、已处理页数与未覆盖警告。若仅有系统 `pdftotext`，只覆盖文本层，扫描页会有能力边界说明。
+PDF 优先逐页读取原生文本；没有文本的页面再做 OCR。混合 PDF 不会因为某一页有文本，就直接跳过其他扫描页。默认最多处理前200页，可通过 `YAN_PDF_MAX_PAGES` 调整至1–500页，输出包含总页数、已处理页数与未覆盖警告。若仅有系统 `pdftotext`，只覆盖文本层，扫描页会有能力边界说明。
 
 ## 本地语音与视频
 
-`faster-whisper` 默认查找本地缓存的 `small` 模型。你也可以把 `WXLENS_ASR_MODEL` 指向已下载的模型目录，或用 `WXLENS_ASR_MODEL_DIR` 指定缓存位置。读取时启用 `local_files_only=True`，缺少模型时返回 ASR 不可用说明。
+`faster-whisper` 默认查找本地缓存的 `small` 模型。你也可以把 `YAN_ASR_MODEL` 指向已下载的模型目录，或用 `YAN_ASR_MODEL_DIR` 指定缓存位置。读取时启用 `local_files_only=True`，缺少模型时返回 ASR 不可用说明。
 
-视频抽取全时段采样关键帧做 OCR，不代表逐帧完整解析。默认最多24帧，可用 `WXLENS_VIDEO_MAX_KEYFRAMES` 调整至3–60。缺OCR模型时保留可用的语音结果并显示视频文字未读警告；缺语音模型时可保留其他媒体证据。
+视频抽取全时段采样关键帧做 OCR，不代表逐帧完整解析。默认最多24帧，可用 `YAN_VIDEO_MAX_KEYFRAMES` 调整至3–60。缺OCR模型时保留可用的语音结果并显示视频文字未读警告；缺语音模型时可保留其他媒体证据。
 
-## 兼容环境变量
+## 环境变量
 
 | 变量 | 用途 |
 | --- | --- |
-| `WXLENS_HTTP_BASE_URL` | 本机WxLens服务地址，优先于本地配置 |
-| `WXLENS_ACCOUNT_DIR` | 明确的账号目录，优先于本地配置 |
-| `WXLENS_OCR_ROOT` | 可选运行时目录 |
-| `WXLENS_OCR_PYTHON` / `WXLENS_XLS_PYTHON` / `WXLENS_MEDIA_PYTHON` | 指定相应Python解释器 |
-| `WXLENS_OCR_MODEL_DIR` | 本地ONNX模型及字符表目录 |
-| `WXLENS_ASR_MODEL` / `WXLENS_ASR_MODEL_DIR` | 语音模型名称或本地位置 |
-| `WXLENS_ASR_DEVICE` / `WXLENS_ASR_COMPUTE_TYPE` | CPU/GPU及计算精度，由使用者按环境配置 |
+| `YAN_HTTP_BASE_URL` | 眼的本机服务地址，优先于本地配置 |
+| `YAN_ACCOUNT_DIR` | 明确的账号目录，优先于本地配置 |
+| `YAN_OCR_ROOT` | 可选运行时目录 |
+| `YAN_OCR_PYTHON` / `YAN_XLS_PYTHON` / `YAN_MEDIA_PYTHON` | 指定相应Python解释器 |
+| `YAN_OCR_MODEL_DIR` | 本地ONNX模型及字符表目录 |
+| `YAN_ASR_MODEL` / `YAN_ASR_MODEL_DIR` | 语音模型名称或本地位置 |
+| `YAN_ASR_DEVICE` / `YAN_ASR_COMPUTE_TYPE` | CPU/GPU及计算精度，由使用者按环境配置 |
 
-更改运行时环境变量后需重启MCP进程。`WXLENS_DESKTOP_EXE`指定WxLens启动程序；查询时可自动后台启动，设`WXLENS_AUTO_START=false`关闭。安装器仅由setup交互确认运行，不依赖Electron的Node模式。
+更改运行时环境变量后需重启MCP进程。`YAN_DESKTOP_EXE`指定眼的启动程序；查询时可自动后台启动，设`YAN_AUTO_START=false`关闭。安装器仅由setup交互确认运行，不依赖Electron的Node模式。原来的 `WXLENS_*` 变量在没有对应 `YAN_*` 时仍然生效。
 
 ## 许可与资源
 

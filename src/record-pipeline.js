@@ -378,8 +378,8 @@ async function findMessageById(fetchPage, options = {}) {
         coverage: { sessionId, scanned, startOffset, nextOffset: offset + consumed, scanLimit, scanExhausted: false, stopReason: 'found', contentComplete: contentIntegrity.complete },
         partial: !contentIntegrity.complete,
         boundary: contentIntegrity.complete
-          ? '按会话内稳定消息ID精确回查；不施加单条消息字符上限，只受WxLens单次HTTP响应上限约束。WxLens返回的 zstd 十六进制正文会先解成 UTF-8；解不开时保留原字段并标记 contentUndecoded，不把压缩十六进制当成明文。'
-          : '已找到消息，但WxLens报告正文不完整、长度不一致或压缩内容未解码；当前结果不能当作完整正文。可用search_messages的索引命中或在上游补齐后再次回查。',
+          ? '按会话内稳定消息ID精确回查；不施加单条消息字符上限，只受眼的单次HTTP响应上限约束。眼返回的 zstd 十六进制正文会先解成 UTF-8；解不开时保留原字段并标记 contentUndecoded，不把压缩十六进制当成明文。'
+          : '已找到消息，但眼报告正文不完整、长度不一致或压缩内容未解码；当前结果不能当作完整正文。可用search_messages的索引命中或在上游补齐后再次回查。',
       }
     }
     offset += consumed
@@ -666,7 +666,7 @@ function renderMarkdown(session, synthesis) {
   const taggedCount = Object.entries(synthesis.messageLabels || {}).filter(([, labels]) => labels.length).length
   lines.push('', `## 消息功能标签（展示 ${Math.min(taggedCount, 300)} / ${taggedCount} 项）`, '')
   for (const [localId, labels] of Object.entries(synthesis.messageLabels || {}).filter(([, labels]) => labels.length).slice(0, 300)) lines.push(`- [localId ${localId}] ${labels.join(' / ')}`)
-  lines.push('', '## 数据边界', '', '- 分类允许一条消息进入多个类别。', '- 每项结论保留 localId 证据定位。', '- 合并转发和文章卡片仍受 WxLens 本地索引完整性限制。', '- 本文件提供证据化结构，不把关键词分类冒充最终语义判断。', '')
+  lines.push('', '## 数据边界', '', '- 分类允许一条消息进入多个类别。', '- 每项结论保留 localId 证据定位。', '- 合并转发和文章卡片仍受眼的本地索引完整性限制。', '- 本文件提供证据化结构，不把关键词分类冒充最终语义判断。', '')
   return lines.join('\n')
 }
 module.exports = { unwrapMessages, decodeStoredMessage, hydrateSearchHits, annotateSearchHits, mergeSearchHit, mergeMessageVariants, contentIntegrityOf, summarizeContentIntegrity, sourceReportedContentTruncated, CATEGORY_RULES, fetchMessageRange, findMessageById, buildIncrementalWindow, buildSearchContextWindows, normalizeMessageContent, curateMessages, classifyAndSynthesize, renderWorkRegisterMarkdown, renderContextThreadsMarkdown, renderMarkdown, resolveOwnedOutputDir }

@@ -7,7 +7,9 @@ const OCR_ROOT = path.join(ROOT, 'ocr-runtime')
 const MANIFEST = path.join(ROOT, '.local', 'optional-runtime.json')
 const DEFAULT_VENV = path.join(OCR_ROOT, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']))
 const MODULES = { xls: ['xlrd'], ocr: ['rapidocr', 'pymupdf'], media: ['faster_whisper'] }
-const ENV_KEYS = { xls: 'WXLENS_XLS_PYTHON', ocr: 'WXLENS_OCR_PYTHON', media: 'WXLENS_MEDIA_PYTHON' }
+const { preferEnv } = require('./config')
+const ENV_SUFFIX = { xls: 'XLS_PYTHON', ocr: 'OCR_PYTHON', media: 'MEDIA_PYTHON' }
+function configuredPython(kind) { return preferEnv(process.env, ENV_SUFFIX[kind]) }
 const probeCache = new Map()
 
 function readManifest() {
@@ -17,7 +19,7 @@ function readManifest() {
   } catch { return {} }
 }
 function runtimePath(kind, fallback = DEFAULT_VENV) {
-  const env = process.env[ENV_KEYS[kind]]
+  const env = configuredPython(kind)
   return env || readManifest().interpreters?.[kind] || fallback
 }
 function pythonModuleAvailable(python, modules) {
@@ -40,7 +42,7 @@ function pythonProbe(spec, modules = []) {
 function candidateSpecs() {
   const specs = []
   for (const kind of ['xls', 'ocr', 'media']) {
-    const configured = process.env[ENV_KEYS[kind]]
+    const configured = configuredPython(kind)
     if (configured) specs.push({ command: configured, args: [] })
   }
   specs.push({ command: DEFAULT_VENV, args: [] })
@@ -86,7 +88,7 @@ function runtimeStatus() {
     manifestPath: MANIFEST,
     interpreters: Object.fromEntries(Object.entries(MODULES).map(([kind, modules]) => {
       const python = runtimePath(kind)
-      return [kind, { configured: Boolean(process.env[ENV_KEYS[kind]] || manifest.interpreters?.[kind]), exists: fs.existsSync(python), modules: pythonModuleAvailable(python, modules) }]
+      return [kind, { configured: Boolean(configuredPython(kind) || manifest.interpreters?.[kind]), exists: fs.existsSync(python), modules: pythonModuleAvailable(python, modules) }]
     })),
   }
 }
