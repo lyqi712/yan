@@ -44,10 +44,9 @@ Windows解压整合包后可直接双击 `install.cmd`。脚本先安装基础No
 
 默认服务地址 `http://127.0.0.1:5032`。查询发现服务未运行时，眼会尝试用 `--background` 启动已经发现的本机程序；MCP 握手本身不会等待它。后台启动只负责复用已经准备好的本机服务。
 
-自定义安装位置、服务端口或附件目录可按需配置：
+眼会自动查找已经安装的程序。只有程序不在常见位置时，才把那个程序文件的真实路径传给 `--yan-exe`。服务端口和附件目录可按需配置：
 
 ```bash
-node src/cli.js config --yan-exe "C:/完整路径/本机程序.exe"
 node src/cli.js config --base-url http://127.0.0.1:5032 --account-dir "D:/WeChat/xwechat_files/your-account"
 npm run doctor
 ```
