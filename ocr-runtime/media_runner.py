@@ -86,7 +86,7 @@ def extract_visual_timeline(source, duration, engine):
     else:
         times = sorted(set(round(duration * index / (wanted - 1), 3) for index in range(wanted)))
     timeline = []
-    with tempfile.TemporaryDirectory(prefix="wxlens-video-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="yan-video-") as temp_dir:
         for index, second in enumerate(times):
             frame = Path(temp_dir) / f"frame-{index:04d}.jpg"
             command = ["ffmpeg", "-v", "error", "-ss", str(second), "-i", str(source), "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", "-y", str(frame)]
