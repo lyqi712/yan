@@ -13,6 +13,16 @@ function installerFile(root = ROOT) {
   if (fs.existsSync(legacy)) return legacy
   return current
 }
+function ensureYanAlias(executable) {
+  const resolved = path.resolve(executable)
+  if (path.basename(resolved).toLowerCase() !== 'wxlens.exe') return { path: '', created: false }
+  const alias = path.join(path.dirname(resolved), 'yan.exe')
+  try {
+    if (fs.existsSync(alias)) return { path: alias, created: false }
+    fs.linkSync(resolved, alias)
+    return { path: alias, created: true }
+  } catch { return { path: '', created: false } }
+}
 async function verifyInstaller(file) {
   if (!fs.existsSync(file)) throw new Error('当前源码包不含眼的安装器。请使用含 vendor/yan-4.3.0-Setup.exe 的整合包，或指定已经安装的本机程序后重试。')
   const stat = fs.statSync(file)
@@ -37,6 +47,8 @@ async function setup() {
       exe = discoverYan(config)
       if (!exe) { console.log('安装器已退出。若安装在自定义位置，请运行 node src/cli.js config --yan-exe "完整程序路径"，然后再运行setup。'); return }
     }
+    const alias = ensureYanAlias(exe)
+    if (alias.created) console.log('已创建眼的程序别名 yan.exe；原程序文件保持不变。')
     config = saveConfig({ ...config, yanExe: exe, autoStart: true })
     console.log('已找到眼并保存自动启动设置。首次初始化在眼的界面内完成，眼不读取或输出密钥。')
     if (await ask('现在打开眼，完成微信登录、密钥获取和本地索引初始化？')) await launchDesktop(exe, false)
@@ -44,4 +56,4 @@ async function setup() {
     console.log(renderMcpConfigs().json)
   } finally { prompt.close() }
 }
-module.exports = { setup, verifyInstaller, installerFile, INSTALLER }
+module.exports = { setup, verifyInstaller, installerFile, ensureYanAlias, INSTALLER }

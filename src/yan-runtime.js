@@ -4,19 +4,33 @@ const os = require('node:os')
 const { spawn } = require('node:child_process')
 const { readConfig, listAccounts } = require('./config')
 const { request } = require('./http-client')
-const PROGRAM_NAMES = ['yan.exe', '眼.exe', 'WxLens.exe']
+const PROGRAM_NAMES = ['WxLens.exe', 'yan.exe', '眼.exe']
 
+function sameFile(left, right) {
+  try {
+    const a = fs.statSync(left)
+    const b = fs.statSync(right)
+    return a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino
+  } catch { return false }
+}
+function stableExecutable(file) {
+  const resolved = path.resolve(file)
+  const original = path.join(path.dirname(resolved), 'WxLens.exe')
+  if (path.basename(resolved).toLowerCase() !== 'wxlens.exe' && sameFile(resolved, original)) return original
+  return resolved
+}
 function discoverYan(config = readConfig(), env = process.env) {
   const local = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
   const programFiles = env.ProgramFiles || 'C:/Program Files'
-  const directories = ['yan', '眼', 'WxLens'].flatMap(name => [path.join(local, 'Programs', name), path.join(local, name), path.join(programFiles, name)])
-  const candidates = [config.yanExe || config.wxlensExe, ...directories].filter(Boolean)
+  const directories = ['WxLens', 'yan', '眼'].flatMap(name => [path.join(local, 'Programs', name), path.join(local, name), path.join(programFiles, name)])
+  const configured = [config.yanExe, config.wxlensExe].filter(Boolean)
+  const candidates = [...configured, ...directories]
   for (const candidate of candidates) {
     try {
-      if (fs.statSync(candidate).isFile()) return path.resolve(candidate)
+      if (fs.statSync(candidate).isFile()) return stableExecutable(candidate)
       for (const name of PROGRAM_NAMES) {
         const exe = path.join(candidate, name)
-        if (fs.statSync(exe).isFile()) return path.resolve(exe)
+        if (fs.statSync(exe).isFile()) return stableExecutable(exe)
       }
     } catch {}
   }
@@ -65,4 +79,4 @@ function createApiClient(options = {}) {
     }
   }
 }
-module.exports = { discoverYan, discoverWxlens: discoverYan, discoverAccount, launchDesktop, createApiClient }
+module.exports = { discoverYan, discoverWxlens: discoverYan, discoverAccount, launchDesktop, createApiClient, stableExecutable }
