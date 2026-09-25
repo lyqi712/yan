@@ -3,7 +3,21 @@ const { fetchMessageRange, buildSearchContextWindows, classifyAndSynthesize } = 
 
 const senderOf = m => String(m.senderId || m.sender_id || m.sender || '')
 const referenceOf = m => ({ sessionId: String(m.sessionId || m.session_id || ''), localId: m.localId ?? null, serverId: m.serverId ?? null, timestamp: Number(m.timestamp || 0) })
-const identityOf = m => createHash('sha256').update(JSON.stringify([referenceOf(m), senderOf(m), String(m.content || '')])).digest('hex')
+const legacyIdentityOf = m => createHash('sha256').update(JSON.stringify([referenceOf(m), senderOf(m), String(m.content || '')])).digest('hex')
+const previousStableIdentityOf = m => {
+  const reference = referenceOf(m)
+  const material = reference.localId !== null || Boolean(reference.serverId) ? [reference] : [reference, senderOf(m), String(m.content || '')]
+  return createHash('sha256').update(JSON.stringify(material)).digest('hex')
+}
+const identityOf = m => {
+  const reference = referenceOf(m)
+  const material = reference.localId !== null && reference.localId !== ''
+    ? [reference.sessionId, 'local', reference.localId]
+    : reference.serverId
+      ? [reference.sessionId, 'server', reference.serverId]
+      : [reference, senderOf(m), String(m.content || '')]
+  return createHash('sha256').update(JSON.stringify(material)).digest('hex')
+}
 const evidenceOf = m => ({ ...m, sourceRef: referenceOf(m), evidenceId: identityOf(m).slice(0, 20) })
 function matches(m, params) {
   const text = String(m.content || '').toLocaleLowerCase()
@@ -60,4 +74,4 @@ function buildSummaryPacket(collection, params = {}) {
   })
   return { ...collection, purpose: params.focus || '综合总结', timeZone, statistics: { totalMessages: all.length, people: [...people.values()].map(p => ({ ...p, names: [...p.names], sessions: [...p.sessions] })).sort((a, b) => b.messages - a.messages), days: Object.fromEntries([...days].sort()), messageTypes: Object.fromEntries(types) }, resourceLinks: [...links.values()].slice(0, 200), candidateRegisters: candidates, summaryContract: { generatedBy: '请由调用本工具的AI基于返回证据撰写自然语言总结', requiredSections: ['范围与覆盖', '关键讨论', '决定与依据', '待办（负责人/期限缺失时留空）', '风险和不同意见', '未解决问题', '来源引用'], citation: '每个关键结论引用 sourceRef 的 sessionId + localId + timestamp；禁止跨群混用 localId。', limits: '不推断人物性格、私密属性或无法核验的意图；提问后出现回答不等于问题已解决。' } }
 }
-module.exports = { senderOf, referenceOf, identityOf, evidenceOf, matches, keywordHits, collectSessions, buildSummaryPacket }
+module.exports = { senderOf, referenceOf, identityOf, legacyIdentityOf, previousStableIdentityOf, evidenceOf, matches, keywordHits, collectSessions, buildSummaryPacket }

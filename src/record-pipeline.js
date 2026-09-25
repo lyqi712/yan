@@ -1,6 +1,8 @@
 const path = require('path')
 const { randomUUID } = require('node:crypto')
+const { zstdDecompressSync } = require('node:zlib')
 const { ownedOutput } = require('./path-safety')
+const MAX_DECODED_TEXT_BYTES = 8 * 1024 * 1024
 
 const CATEGORY_RULES = [
   { id: 'content-growth', name: '内容、自媒体与增长', keywords: ['小红书','公众号','抖音','视频号','选题','标题','内容','流量','涨粉','引流','矩阵','爆款'] },
@@ -26,12 +28,218 @@ const MESSAGE_LABEL_RULES = [
 ]
 const RESOLUTION_LABELS = new Set(['action-plan','decision','evidence-or-result'])
 
+function isZstdHex(value) {
+  const compact = String(value || '').replace(/\s+/g, '')
+  return /^28b52ffd[0-9a-f]*$/i.test(compact) && compact.length >= 8
+}
+function isTrueFlag(value) {
+  return value === true || value === 1 || (typeof value === 'string' && value.trim().toLowerCase() === 'true')
+}
+function sourceReportedContentTruncated(message) {
+  return ['contentTruncated', 'content_truncated', 'truncated', 'rawContentTruncated'].some(key => isTrueFlag(message?.[key]))
+}
+function contentIntegrityOf(message) {
+  const content = message?.content == null ? '' : String(message.content)
+  const originalLength = Number(message?.originalLength)
+  const observedLength = Number.isFinite(Number(message?.storedContentLength)) ? Number(message.storedContentLength) : content.length
+  const lengthMismatch = Number.isFinite(originalLength) && originalLength >= 0 && originalLength > observedLength
+  const undecoded = Boolean(message?.contentUndecoded) || isZstdHex(content)
+  const sourceReportedTruncated = sourceReportedContentTruncated(message)
+  const readable = !undecoded
+  return {
+    characters: Array.from(content).length,
+    utf8Bytes: Buffer.byteLength(content, 'utf8'),
+    sourceReportedTruncated,
+    lengthMismatch,
+    contentDecoded: message?.contentDecoded || (undecoded ? 'encoded' : 'plain'),
+    contentUndecoded: undecoded,
+    readable,
+    complete: readable && !sourceReportedTruncated && !lengthMismatch,
+  }
+}
+function summarizeContentIntegrity(messages) {
+  const rows = (messages || []).map(contentIntegrityOf)
+  const sourceReportedTruncated = rows.filter(row => row.sourceReportedTruncated).length
+  const undecoded = rows.filter(row => row.contentUndecoded).length
+  const lengthMismatch = rows.filter(row => row.lengthMismatch).length
+  return {
+    returnedMessages: rows.length,
+    complete: rows.every(row => row.complete),
+    sourceReportedTruncated,
+    undecoded,
+    lengthMismatch,
+    warning: sourceReportedTruncated || undecoded || lengthMismatch ? '部分消息正文由上游截断、未解码或长度不一致；当前结果不能当作全部正文完整。' : '',
+  }
+}
+function decodeStoredMessage(message) {
+  if (!message || typeof message !== 'object') return message
+  const content = message.content == null ? '' : String(message.content)
+  const compact = content.replace(/\s+/g, '')
+  if (!isZstdHex(compact)) return message
+  if (compact.length % 2 !== 0) return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-failed', contentUndecoded: true, contentUndecodedReason: 'odd-hex' }
+  if (typeof zstdDecompressSync !== 'function') return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-unavailable', contentUndecoded: true }
+  let raw
+  try { raw = zstdDecompressSync(Buffer.from(compact, 'hex')) } catch { return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-failed', contentUndecoded: true } }
+  if (raw.length === 0) return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-empty', contentUndecoded: true, contentUndecodedReason: sourceReportedContentTruncated(message) ? 'source-truncated' : 'empty-decoded-payload' }
+  if (raw.length > MAX_DECODED_TEXT_BYTES) return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-too-large', contentUndecoded: true }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(raw)
+    return { ...message, storedContentLength: compact.length, content: text, contentDecoded: 'zstd', contentUndecoded: false }
+  } catch { return { ...message, storedContentLength: compact.length, contentDecoded: 'zstd-not-utf8', contentUndecoded: true } }
+}
 function unwrapMessages(data) {
-  if (Array.isArray(data)) return { messages: data, session: null }
-  return { messages: Array.isArray(data?.messages) ? data.messages : [], session: data?.session || null }
+  const messages = Array.isArray(data) ? data : (Array.isArray(data?.messages) ? data.messages : [])
+  return { messages: messages.map(decodeStoredMessage), session: Array.isArray(data) ? null : (data?.session || null) }
+}
+function isStrongContentSource(message) {
+  return ['exact-message', 'session-message'].includes(String(message?.contentSource || ''))
+}
+function chooseContentVariant(hit, source) {
+  const hitIntegrity = contentIntegrityOf(hit)
+  const sourceIntegrity = contentIntegrityOf(source)
+  if (sourceIntegrity.complete && (!hitIntegrity.complete || !isStrongContentSource(hit) || isStrongContentSource(source))) return { message: source, integrity: sourceIntegrity }
+  if (hitIntegrity.complete) return { message: hit, integrity: hitIntegrity }
+  if (sourceIntegrity.readable) return { message: source, integrity: sourceIntegrity }
+  return { message: hit, integrity: hitIntegrity }
+}
+function mergeSearchHit(hit, source) {
+  if (!source) return hit
+  const chosen = chooseContentVariant(hit, source)
+  const selected = chosen.message
+  const senderId = String(source.senderId || source.sender_id || '') || String(hit.senderId || hit.sender_id || '')
+  const sourceType = Number(source.type)
+  const hitType = Number(hit.type)
+  const type = sourceType > 0 ? sourceType : (hitType > 0 ? hitType : hit.type)
+  const merged = {
+    ...hit,
+    ...source,
+    content: selected.content,
+    sender: senderId ? (source.sender || hit.sender || senderId) : (hit.sender || ''),
+    senderId,
+    senderName: senderId ? (source.senderName || hit.senderName || '') : (hit.senderName || ''),
+    type,
+    typeName: sourceType > 0 ? (source.typeName || hit.typeName) : hit.typeName,
+    isSend: senderId ? (source.isSend ?? hit.isSend) : hit.isSend,
+    isSelf: senderId ? Boolean(source.isSelf ?? hit.isSelf) : Boolean(hit.isSelf),
+    nameResolved: senderId ? Boolean(source.nameResolved ?? hit.nameResolved) : Boolean(hit.nameResolved),
+    serverId: source.serverId || hit.serverId || '',
+    contentDecoded: selected.contentDecoded || (selected === source ? source.contentDecoded : hit.contentDecoded),
+    contentUndecoded: Boolean(selected.contentUndecoded),
+    contentSource: selected.contentSource || (selected === source ? 'session-message' : 'search-index'),
+    contentIntegrity: chosen.integrity,
+  }
+  for (const field of ['truncated', 'contentTruncated', 'content_truncated', 'rawContentTruncated', 'originalLength', 'storedContentLength']) {
+    if (selected[field] !== undefined) merged[field] = selected[field]
+    else delete merged[field]
+  }
+  return merged
+}
+function searchHitNeedsHydration(message) {
+  const senderId = String(message?.senderId || message?.sender_id || '')
+  const type = Number(message?.type)
+  const identityIncomplete = !senderId || !Number.isFinite(type) || type === 0
+  const integrity = contentIntegrityOf(message)
+  return identityIncomplete || !integrity.complete || Boolean(message?.contentUndecoded) || message?.contentDecoded === 'zstd' || isZstdHex(message?.content)
+}
+function identityCompleteOf(message) {
+  const senderId = String(message?.senderId || message?.sender_id || message?.sender || '')
+  const type = Number(message?.type)
+  return Boolean(senderId) && Number.isFinite(type) && type !== 0
+}
+function annotateSearchHits(messages, source = 'search-index', statuses = new Map(), fallbackSession = '') {
+  return (messages || []).map(message => {
+    const sessionId = String(message.sessionId || message.session_id || fallbackSession || '')
+    const key = `${sessionId}:${Number(message.localId)}`
+    const needsHydration = searchHitNeedsHydration(message) || !identityCompleteOf(message)
+    const hydration = statuses.get(key) || message.hydrationStatus || (needsHydration
+      ? { attempted: false, found: false, complete: false, partial: true, reason: 'hydration-required' }
+      : { attempted: false, found: true, complete: true, partial: false, reason: 'not-needed' })
+    const contentIntegrity = contentIntegrityOf(message)
+    return { ...message, sessionId: message.sessionId || message.session_id || fallbackSession || undefined, contentSource: message.contentSource || source, contentIntegrity, contentComplete: contentIntegrity.complete, identityComplete: identityCompleteOf(message), hydrationStatus: hydration }
+  })
+}
+async function hydrateSearchHits(fetchPage, hits, options = {}) {
+  const decodedHits = (hits || []).map(decodeStoredMessage)
+  const statuses = new Map()
+  if (!decodedHits.some(searchHitNeedsHydration) || typeof fetchPage !== 'function') return annotateSearchHits(decodedHits, 'search-index', statuses, options.session_id)
+  const scanLimit = Math.min(Math.max(Number(options.scan_limit) || 2000, 1), 20000)
+  const bySession = new Map()
+  for (const hit of decodedHits) {
+    if (!searchHitNeedsHydration(hit)) continue
+    const sessionId = String(hit.sessionId || hit.session_id || options.session_id || '')
+    if (!sessionId || hit.localId == null) continue
+    if (!bySession.has(sessionId)) bySession.set(sessionId, new Set())
+    bySession.get(sessionId).add(Number(hit.localId))
+  }
+  const sources = new Map()
+  for (const [sessionId, ids] of bySession) {
+    let offset = 0, scanned = 0, stopReason = 'scan-limit', fetchError = ''
+    try {
+      while (ids.size && scanned < scanLimit) {
+        const requestSize = Math.min(100, scanLimit - scanned)
+        const page = unwrapMessages(await fetchPage({ session_id: sessionId, limit: requestSize, offset }))
+        if (!page.messages.length) { stopReason = 'exhausted'; break }
+        let consumed = 0
+        for (const message of page.messages) {
+          if (scanned >= scanLimit) break
+          scanned += 1; consumed += 1
+          const localId = Number(message.localId)
+          if (!ids.has(localId)) continue
+          const source = { ...message, sessionId: message.sessionId || sessionId, contentSource: 'session-message' }
+          sources.set(`${sessionId}:${localId}`, source)
+          ids.delete(localId)
+          const sourceIntegrity = contentIntegrityOf(source)
+          const sourceIdentityComplete = identityCompleteOf(source)
+          statuses.set(`${sessionId}:${localId}`, { attempted: true, found: true, complete: sourceIntegrity.complete && sourceIdentityComplete, partial: !(sourceIntegrity.complete && sourceIdentityComplete), lookupComplete: true, contentComplete: sourceIntegrity.complete, identityComplete: sourceIdentityComplete, scanned, nextOffset: offset + consumed, stopReason: 'found' })
+        }
+        offset += consumed
+        if (page.messages.length < requestSize) { stopReason = 'exhausted'; break }
+        if (!consumed) { stopReason = 'no-progress'; break }
+      }
+      if (!ids.size && scanned < scanLimit) { stopReason = 'found' }
+    } catch (error) {
+      fetchError = String(error?.message || error).slice(0, 300)
+      stopReason = 'request-error'
+    }
+    for (const localId of ids) statuses.set(`${sessionId}:${localId}`, { attempted: true, found: false, complete: false, partial: true, scanned, nextOffset: offset, scanLimit, stopReason, ...(fetchError ? { error: fetchError } : {}) })
+  }
+  return annotateSearchHits(decodedHits.map(hit => {
+    const sessionId = String(hit.sessionId || hit.session_id || options.session_id || '')
+    const key = `${sessionId}:${Number(hit.localId)}`
+    if (searchHitNeedsHydration(hit) && (!sessionId || hit.localId == null) && !statuses.has(key)) statuses.set(key, { attempted: false, found: false, complete: false, partial: true, stopReason: 'missing-reference' })
+    const merged = mergeSearchHit(hit, sources.get(key))
+    const status = statuses.get(key)
+    if (status?.found) {
+      const contentComplete = contentIntegrityOf(merged).complete
+      const identityComplete = identityCompleteOf(merged)
+      statuses.set(key, { ...status, contentComplete, identityComplete, complete: contentComplete && identityComplete, partial: !(contentComplete && identityComplete) })
+    }
+    return merged
+  }), 'search-index', statuses, options.session_id)
+}
+function messageVariantKey(message, fallbackSession = '') {
+  const sessionId = String(message?.sessionId || message?.session_id || fallbackSession || '')
+  const localId = message?.localId ?? message?.local_id ?? ''
+  const serverId = message?.serverId ?? message?.server_id ?? ''
+  if (localId !== '' && localId !== null) return `${sessionId}:local:${localId}`
+  if (serverId !== '' && serverId !== null) return `${sessionId}:server:${serverId}`
+  return `${sessionId}:content:${String(message?.content || '')}`
+}
+function mergeMessageVariants(messages, fallbackSession = '') {
+  const groups = new Map()
+  for (const message of messages || []) {
+    const key = messageVariantKey(message, fallbackSession)
+    const rows = groups.get(key) || []
+    rows.push(message)
+    groups.set(key, rows)
+  }
+  return [...groups.values()].map(rows => rows.slice(1).reduce((current, candidate) => mergeSearchHit(current, candidate), rows[0]))
 }
 function messageKey(message) {
-  return `${message.sessionId || ''}:${message.localId || ''}:${message.serverId || ''}:${message.timestamp || ''}:${message.content || ''}`
+  const sessionId = message.sessionId || message.session_id || ''
+  if (message.localId !== undefined && message.localId !== null && message.localId !== '') return `${sessionId}:local:${message.localId}`
+  if (message.serverId !== undefined && message.serverId !== null && message.serverId !== '') return `${sessionId}:server:${message.serverId}`
+  return `${sessionId}:${message.timestamp || ''}:${message.content || ''}`
 }
 function buildSearchContextWindows(messages, hits, options = {}) {
   const before = Math.min(Math.max(Number(options.context_before) || 0, 0), 50)
@@ -116,7 +324,7 @@ async function fetchMessageRange(fetchPage, options = {}) {
     for (const original of page.messages) {
       if (scanned >= scanLimit || seen.size >= targetLimit) break
       consumed += 1; scanned += 1
-      const message = { ...original, sessionId: original.sessionId || original.session_id || options.session_id || '' }
+      const message = { ...original, sessionId: original.sessionId || original.session_id || options.session_id || '', contentSource: original.contentSource || 'session-message' }
       const key = messageKey(message)
       if (sourceKeys.has(key)) continue
       sourceKeys.add(key); newKeys += 1
@@ -124,7 +332,8 @@ async function fetchMessageRange(fetchPage, options = {}) {
       if ((endTime && timestamp > endTime) || (startTime && timestamp < startTime)) continue
       if (options.sender_id && String(message.senderId || message.sender_id || message.sender || '') !== options.sender_id) continue
       if (options.message_types?.length && !options.message_types.includes(Number(message.type))) continue
-      seen.set(key, message)
+      const contentIntegrity = contentIntegrityOf(message)
+      seen.set(key, { ...message, contentIntegrity, contentComplete: contentIntegrity.complete });
     }
     offset += consumed
     if (!newKeys && consumed) { stopReason = 'no-progress'; break }
@@ -133,7 +342,58 @@ async function fetchMessageRange(fetchPage, options = {}) {
   }
   if (!complete && scanned >= scanLimit) stopReason = 'scan-limit'
   const messages = [...seen.values()].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0) || Number(a.localId || 0) - Number(b.localId || 0))
-  return { formatVersion: 4, session, messages, returned: messages.length, pagination: { requested: targetLimit, pageSize, pagesFetched, scanned, scanLimit, nextOffset: offset, complete, stopReason, warning: complete ? '' : '结果仅覆盖已扫描窗口。可使用 nextOffset 继续；消息新增时 offset 分页可能发生重叠。' } }
+  return { formatVersion: 4, session, messages, returned: messages.length, contentIntegrity: summarizeContentIntegrity(messages), pagination: { requested: targetLimit, pageSize, pagesFetched, scanned, scanLimit, nextOffset: offset, complete, stopReason, warning: complete ? '' : '结果仅覆盖已扫描窗口。可使用 nextOffset 继续；消息新增时 offset 分页可能发生重叠。' } }
+}
+async function findMessageById(fetchPage, options = {}) {
+  const sessionId = String(options.session_id || '')
+  const localId = options.local_id == null ? null : String(options.local_id)
+  const serverId = options.server_id == null ? null : String(options.server_id)
+  if (!sessionId || (localId === null && !serverId)) throw new Error('请提供session_id以及local_id或server_id')
+  const scanLimit = Math.min(Math.max(Number(options.scan_limit) || 1000, 1), 20000)
+  const pageSize = Math.min(Math.max(Number(options.page_size) || 100, 1), 100)
+  const startOffset = Math.max(Number(options.offset) || 0, 0)
+  const seen = new Set()
+  let offset = startOffset, scanned = 0, complete = false, stopReason = 'scan-limit'
+  while (scanned < scanLimit) {
+    const requestSize = Math.min(pageSize, scanLimit - scanned)
+    const page = unwrapMessages(await fetchPage({ session_id: sessionId, limit: requestSize, offset }))
+    if (!page.messages.length) { complete = true; stopReason = 'exhausted'; break }
+    let consumed = 0, newMessages = 0
+    for (const original of page.messages) {
+      if (consumed >= requestSize) break
+      consumed += 1; scanned += 1
+      const message = { ...original, sessionId: original.sessionId || original.session_id || sessionId, contentSource: original.contentSource || 'session-message' }
+      const key = messageKey(message)
+      if (seen.has(key)) continue
+      seen.add(key); newMessages += 1
+      const matchesLocalId = localId === null || String(message.localId ?? '') === localId
+      const matchesServerId = serverId === null || String(message.serverId ?? message.server_id ?? '') === serverId
+      if (!matchesLocalId || !matchesServerId) continue
+      const contentIntegrity = contentIntegrityOf(message)
+      const enrichedMessage = { ...message, contentIntegrity, contentComplete: contentIntegrity.complete }
+      return {
+        found: true,
+        message: enrichedMessage,
+        contentIntegrity,
+        coverage: { sessionId, scanned, startOffset, nextOffset: offset + consumed, scanLimit, scanExhausted: false, stopReason: 'found', contentComplete: contentIntegrity.complete },
+        partial: !contentIntegrity.complete,
+        boundary: contentIntegrity.complete
+          ? '按会话内稳定消息ID精确回查；不施加单条消息字符上限，只受WxLens单次HTTP响应上限约束。WxLens返回的 zstd 十六进制正文会先解成 UTF-8；解不开时保留原字段并标记 contentUndecoded，不把压缩十六进制当成明文。'
+          : '已找到消息，但WxLens报告正文不完整、长度不一致或压缩内容未解码；当前结果不能当作完整正文。可用search_messages的索引命中或在上游补齐后再次回查。',
+      }
+    }
+    offset += consumed
+    if (!newMessages && consumed) { stopReason = 'no-progress'; break }
+    if (consumed === page.messages.length && page.messages.length < requestSize) { complete = true; stopReason = 'exhausted'; break }
+  }
+  if (!complete && scanned >= scanLimit) stopReason = 'scan-limit'
+  return {
+    found: false,
+    message: null,
+    coverage: { sessionId, scanned, startOffset, nextOffset: offset, scanLimit, scanExhausted: complete, stopReason },
+    partial: !complete,
+    boundary: complete ? '已扫描到当前索引末尾，未找到该ID。' : '在当前有界扫描窗口内未找到该ID；使用nextOffset继续，不代表整个会话历史不存在该消息。',
+  }
 }
 function normalizeMessageContent(value) {
   return String(value || '').replace(/\u0008/g, '\n').replace(/[\u200b-\u200f\u2060\ufeff]/g, '').replace(/\s+/g, ' ').trim()
@@ -183,19 +443,20 @@ function qualitySignals(message, normalized) {
 function curateMessages(messages) {
   const selectedMessages = []; const noiseMessages = []; const seen = new Map()
   for (const message of messages) {
-    const normalized = normalizeMessageContent(message.content)
+    const originalContent = message.content == null ? '' : String(message.content)
+    const normalized = normalizeMessageContent(originalContent)
     const sender = message.senderId || message.sender || ''
     const fingerprint = `${sender}:${normalized.toLowerCase()}`
     const duplicateOf = normalized && seen.has(fingerprint) ? seen.get(fingerprint) : null
     if (normalized && !duplicateOf) seen.set(fingerprint, message.localId)
     const reason = noiseReason(message, normalized, duplicateOf)
     if (reason) {
-      noiseMessages.push({ localId: message.localId, time: message.time, sender: message.senderName || sender, type: message.type, reason, duplicateOf, excerpt: normalized.slice(0, 300) })
+      noiseMessages.push({ localId: message.localId, time: message.time, sender: message.senderName || sender, type: message.type, reason, duplicateOf, content: originalContent, contentChars: Array.from(originalContent).length, contentBytes: Buffer.byteLength(originalContent, 'utf8'), contentTruncated: false, excerpt: normalized.slice(0, 300), excerptTruncated: normalized.length > 300 })
       continue
     }
     const signals = qualitySignals(message, normalized)
     const qualityScore = Math.min(100, 35 + Math.min(normalized.length, 160) / 4 + signals.length * 10)
-    selectedMessages.push({ ...message, content: normalized, qualityScore: Math.round(qualityScore), qualitySignals: signals })
+    selectedMessages.push({ ...message, content: originalContent, normalizedContent: normalized, qualityScore: Math.round(qualityScore), qualitySignals: signals })
   }
   const byReason = {}; for (const row of noiseMessages) byReason[row.reason] = (byReason[row.reason] || 0) + 1
   return { selectedMessages, noiseMessages, quality: { sourceMessages: messages.length, selectedMessages: selectedMessages.length, noiseMessages: noiseMessages.length, selectedRatio: messages.length ? selectedMessages.length / messages.length : 0, noiseByReason: byReason } }
@@ -275,7 +536,7 @@ function workRegisterEvidence(message, confidence = 'medium') {
     localId: message.localId,
     timestamp: message.timestamp || null,
     sender: message.senderName || message.senderId || message.sender || '',
-    excerpt: normalizeMessageContent(message.content).slice(0, 500),
+    ...contentExcerpt(normalizeMessageContent(message.content)),
     confidence,
   }
 }
@@ -308,6 +569,10 @@ function buildWorkRegister(messages, labelsById) {
   }
   return { summary: { decisions: decisions.length, tasks: tasks.length, risks: risks.length, results: results.length }, decisions, tasks, risks, results }
 }
+function contentExcerpt(value, limit = 500) {
+  const text = String(value ?? '')
+  return { excerpt: text.slice(0, limit), excerptTruncated: text.length > limit }
+}
 function classifyAndSynthesize(messages, options = {}) {
   const curated = curateMessages(messages)
   messages = curated.selectedMessages
@@ -317,7 +582,7 @@ function classifyAndSynthesize(messages, options = {}) {
     for (const message of messages) {
       const content = String(message.content || ''); const matched = rule.keywords.filter(keyword => content.toLowerCase().includes(keyword.toLowerCase()))
       if (matched.length < minScore) continue
-      evidence.push({ localId: message.localId, timestamp: message.timestamp, time: message.time, sender: message.senderName || message.senderId || message.sender || '', excerpt: content.slice(0, 500), matchedKeywords: matched })
+      evidence.push({ localId: message.localId, timestamp: message.timestamp, time: message.time, sender: message.senderName || message.senderId || message.sender || '', ...contentExcerpt(content), matchedKeywords: matched })
       assigned.add(messageKey(message)); evidenceIndex[String(message.localId || messageKey(message))] ||= []; evidenceIndex[String(message.localId || messageKey(message))].push(rule.id)
     }
     if (evidence.length) {
@@ -327,10 +592,10 @@ function classifyAndSynthesize(messages, options = {}) {
   }
   for (const message of messages) {
     const content = String(message.content || '')
-    if (RISK_TERMS.some(term => content.includes(term))) risks.push({ localId: message.localId, time: message.time, excerpt: content.slice(0, 500) })
-    if (ACTION_TERMS.some(term => content.includes(term))) actionableAssets.push({ localId: message.localId, time: message.time, excerpt: content.slice(0, 500), assetSignals: ACTION_TERMS.filter(term => content.includes(term)) })
+    if (RISK_TERMS.some(term => content.includes(term))) risks.push({ localId: message.localId, time: message.time, ...contentExcerpt(content) })
+    if (ACTION_TERMS.some(term => content.includes(term))) actionableAssets.push({ localId: message.localId, time: message.time, ...contentExcerpt(content), assetSignals: ACTION_TERMS.filter(term => content.includes(term)) })
   }
-  const uncategorized = messages.filter(message => !assigned.has(messageKey(message))).map(message => ({ localId: message.localId, time: message.time, sender: message.senderName || message.senderId || '', excerpt: String(message.content || '').slice(0, 300) }))
+  const uncategorized = messages.filter(message => !assigned.has(messageKey(message))).map(message => ({ localId: message.localId, time: message.time, sender: message.senderName || message.senderId || '', ...contentExcerpt(String(message.content || ''), 300) }))
   const messageLabelsById = Object.fromEntries(messages.map(message => [String(message.localId || messageKey(message)), messageLabels(message)]))
   const contextThreads = buildContextThreads(messages, messageLabelsById, options)
   const workRegister = buildWorkRegister(messages, messageLabelsById)
@@ -377,7 +642,8 @@ function renderWorkRegisterMarkdown(workRegister = {}) {
     lines.push(`## ${title}`, '')
     for (const item of items) {
       const hints = title === '任务' ? `｜负责人提示 ${item.assigneeHint || '未明确'}｜期限提示 ${item.dueHint || '未明确'}` : ''
-      lines.push(`- localId ${item.localId}｜timestamp ${item.timestamp ?? '未知'}｜sender ${item.sender || '未知'}｜confidence ${item.confidence || 'unknown'}${hints}｜${String(item.excerpt || '').replace(/\s+/g, ' ')}`)
+      const excerpt = String(item.excerpt || '').replace(/\s+/g, ' ')
+      lines.push(`- localId ${item.localId}｜timestamp ${item.timestamp ?? '未知'}｜sender ${item.sender || '未知'}｜confidence ${item.confidence || 'unknown'}${hints}｜${excerpt}${item.excerptTruncated ? '…（摘录，完整消息见分析数据）' : ''}`)
     }
     if (!items.length) lines.push('- 无')
     lines.push('')
@@ -387,19 +653,20 @@ function renderWorkRegisterMarkdown(workRegister = {}) {
 function renderMarkdown(session, synthesis) {
   const lines = [`# 微信聊天记录高价值整合`, '', `- 会话：${session?.name || session?.id || '[未知]'}`, `- 原始消息：${synthesis.coverage.sourceMessages}`, `- 精选消息：${synthesis.coverage.selectedMessages}`, `- 噪声隔离：${synthesis.coverage.noiseMessages}`, `- 已分类：${synthesis.coverage.categorizedMessages}`, `- 未分类但保留：${synthesis.coverage.uncategorizedMessages}`, '', '## 质量门', '', `- 精选比例：${(synthesis.quality.selectedRatio * 100).toFixed(1)}%`, `- 噪声分布：${Object.entries(synthesis.quality.noiseByReason).map(([reason,count]) => `${reason}×${count}`).join('、') || '无'}`, '', '## 分类总览', '']
   for (const category of synthesis.categories) {
-    lines.push(`### ${category.name}（${category.messageCount} 条）`, '', `高频信号：${category.topKeywords.map(item => `${item.keyword}×${item.count}`).join('、')}`, '')
-    for (const item of category.evidence.slice(0, 50)) lines.push(`- [localId ${item.localId}] ${item.sender}：${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}`)
+    lines.push(`### ${category.name}（${category.messageCount} 条）`, '', `高频信号：${category.topKeywords.map(item => `${item.keyword}×${item.count}`).join('、')}`, `证据展示：前${Math.min(category.evidence.length, 50)} / ${category.evidence.length} 条；完整原文见结构化分析数据。`, '')
+    for (const item of category.evidence.slice(0, 50)) lines.push(`- [localId ${item.localId}] ${item.sender}：${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}${item.excerptTruncated ? '…（摘录）' : ''}`)
     lines.push('')
   }
-  lines.push('## 可产品化资产', '')
-  for (const item of synthesis.actionableAssets.slice(0, 100)) lines.push(`- [localId ${item.localId}] ${item.assetSignals.join('/')}：${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}`)
-  lines.push('', '## 风险与反面案例', '')
-  for (const item of synthesis.risks.slice(0, 100)) lines.push(`- [localId ${item.localId}] ${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}`)
+  lines.push(`## 可产品化资产（展示 ${Math.min(synthesis.actionableAssets.length, 100)} / ${synthesis.actionableAssets.length} 条）`, '')
+  for (const item of synthesis.actionableAssets.slice(0, 100)) lines.push(`- [localId ${item.localId}] ${item.assetSignals.join('/')}：${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}${item.excerptTruncated ? '…（摘录）' : ''}`)
+  lines.push('', `## 风险与反面案例（展示 ${Math.min(synthesis.risks.length, 100)} / ${synthesis.risks.length} 条）`, '')
+  for (const item of synthesis.risks.slice(0, 100)) lines.push(`- [localId ${item.localId}] ${item.excerpt.replace(/\s+/g, ' ').slice(0, 300)}${item.excerptTruncated ? '…（摘录）' : ''}`)
   lines.push('', renderWorkRegisterMarkdown(synthesis.workRegister || {}), '')
   lines.push('', renderContextThreadsMarkdown(synthesis.contextThreads || [], synthesis.quality || {}), '')
-  lines.push('', '## 消息功能标签', '')
+  const taggedCount = Object.entries(synthesis.messageLabels || {}).filter(([, labels]) => labels.length).length
+  lines.push('', `## 消息功能标签（展示 ${Math.min(taggedCount, 300)} / ${taggedCount} 项）`, '')
   for (const [localId, labels] of Object.entries(synthesis.messageLabels || {}).filter(([, labels]) => labels.length).slice(0, 300)) lines.push(`- [localId ${localId}] ${labels.join(' / ')}`)
   lines.push('', '## 数据边界', '', '- 分类允许一条消息进入多个类别。', '- 每项结论保留 localId 证据定位。', '- 合并转发和文章卡片仍受 WxLens 本地索引完整性限制。', '- 本文件提供证据化结构，不把关键词分类冒充最终语义判断。', '')
   return lines.join('\n')
 }
-module.exports = { unwrapMessages, CATEGORY_RULES, fetchMessageRange, buildIncrementalWindow, buildSearchContextWindows, normalizeMessageContent, curateMessages, classifyAndSynthesize, renderWorkRegisterMarkdown, renderContextThreadsMarkdown, renderMarkdown, resolveOwnedOutputDir }
+module.exports = { unwrapMessages, decodeStoredMessage, hydrateSearchHits, annotateSearchHits, mergeSearchHit, mergeMessageVariants, contentIntegrityOf, summarizeContentIntegrity, sourceReportedContentTruncated, CATEGORY_RULES, fetchMessageRange, findMessageById, buildIncrementalWindow, buildSearchContextWindows, normalizeMessageContent, curateMessages, classifyAndSynthesize, renderWorkRegisterMarkdown, renderContextThreadsMarkdown, renderMarkdown, resolveOwnedOutputDir }

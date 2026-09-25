@@ -5,8 +5,22 @@ const os = require('node:os')
 const path = require('node:path')
 const { createWatchStore } = require('../watchlists')
 const { collectSessions, buildSummaryPacket } = require('../session-tools')
-const { buildIncrementalWindow } = require('../record-pipeline')
+const { buildIncrementalWindow, classifyAndSynthesize } = require('../record-pipeline')
+const { identityOf, legacyIdentityOf, previousStableIdentityOf } = require('../session-tools')
 function row(id, sender = 'a', timestamp = id, content = `方案${id}`) { return { localId: id, senderId: sender, senderName: '重名', timestamp, content, type: 1 } }
+test('稳定消息ID使压缩表示变化不产生新的关注身份', () => {
+  const encoded = { sessionId: 'g', localId: 7, serverId: 'server-7', timestamp: 70, senderId: 'a', content: '28b52ffddeadbeef' }
+  const decoded = { ...encoded, content: '已解码正文🙂' }
+  assert.equal(identityOf(encoded), identityOf(decoded))
+  assert.equal(identityOf(encoded), identityOf({ ...encoded, timestamp: 71 }))
+  assert.notEqual(legacyIdentityOf(encoded), legacyIdentityOf(decoded))
+})
+test('旧版带时间戳身份键仍被关注列表兼容', () => {
+  const encoded = { sessionId: 'g', localId: 7, serverId: 'server-7', timestamp: 70, senderId: 'a', content: 'encoded' }
+  const moved = { ...encoded, timestamp: 71 }
+  assert.notEqual(previousStableIdentityOf(encoded), previousStableIdentityOf(moved))
+  assert.equal(identityOf(encoded), identityOf(moved))
+})
 function setup(t, groups) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yan-watch-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const store = createWatchStore({ root, config: () => ({ baseUrl: 'http://127.0.0.1:1', accountDir: 'synthetic' }) })
@@ -106,12 +120,43 @@ test('超过5000条积压可以跨批追赶，追赶期间新增在下一轮补�
   }
   assert.equal(found.size, 5102); assert.equal(found.has(1), false); assert.equal(found.has(5103), true)
 })
+test('超长中文正文在关注批次与重读分页中保持原文且明确长度', async t => {
+  const content = '开始🙂甲乙丙'.repeat(1200) + '结尾-END'
+  const groups = { g: [row(2, 'a', 2, content), row(1, 'a', 1)] }, { store, request } = setup(t, groups)
+  await store.configure({ id: 'work', session_ids: ['g'] })
+  const batch = await store.poll({ id: 'work', include_initial: true, per_session_limit: 10, delivery_limit: 1 }, request)
+  assert.equal(batch.delivery.total, 2)
+  const nextPage = await store.readBatch({ id: 'work', batch_id: batch.batchId, offset: 1, limit: 1 })
+  const message = nextPage.messages[0]
+  assert.equal(message.content, content)
+  assert.equal(message.contentTruncated, false)
+  assert.equal(message.contentChars, Array.from(content).length)
+  assert.equal(message.contentBytes, Buffer.byteLength(content, 'utf8'))
+  await store.acknowledge({ id: 'work', batch_id: batch.batchId })
+})
+test('分析结果保留长消息原文，摘录截断显式标记', () => {
+  const content = '这是需要保留的完整长正文。'.repeat(80)
+  const synthesis = classifyAndSynthesize([row(1, 'a', 1, content), row(2, 'a', 2, content)])
+  assert.equal(synthesis.selectedMessages[0].content, content)
+  assert.equal(synthesis.noiseMessages[0].excerptTruncated, true)
+})
+test('关注批次保留WxLens的truncated标记，不把部分正文当完整', async t => {
+  const groups = { g: [{ ...row(1, 'a', 1, '部分正文'), truncated: true, originalLength: 200 }] }
+  const { store, request } = setup(t, groups)
+  await store.configure({ id: 'truncated', session_ids: ['g'] })
+  const batch = await store.poll({ id: 'truncated', include_initial: true }, request)
+  assert.equal(batch.messages[0].contentTruncated, true)
+  assert.equal(batch.messages[0].contentComplete, false)
+  assert.equal(batch.groups[0].contentComplete, false)
+  assert.equal(batch.partial, true)
+  assert.equal(batch.messages[0].contentOriginalLength, 200)
+})
 test('超大批次在保存前拒绝，列表仍可读取并降低预算重试', async t => {
   const groups = Object.fromEntries(['a','b','c'].map(id => [id, Array.from({ length: 1000 }, (_, i) => row(1000-i, 'a', 1000-i, '文'.repeat(8000)))])), { store, request } = setup(t, groups)
   await store.configure({ id: 'work', session_ids: ['a','b','c'] })
   await assert.rejects(store.poll({ id: 'work', per_session_limit: 1000, include_initial: true }, request), /16MB/)
   assert.equal(store.list().watchlists[0].pendingBatchId, null)
   const batch = await store.poll({ id: 'work', per_session_limit: 100, include_initial: true }, request)
-  assert.equal(batch.messages.length, 300); assert.equal(batch.messages[0].contentTruncated, true)
+  assert.equal(batch.messages.length, 300); assert.equal(batch.messages[0].contentTruncated, false); assert.equal(batch.messages[0].contentChars, 8000)
   await store.acknowledge({ id: 'work', batch_id: batch.batchId })
 })

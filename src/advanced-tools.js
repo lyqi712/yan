@@ -11,8 +11,9 @@ const GUIDE = `# 眼 · MCP 使用指南
 4. 各类总结：prepare_chat_summary 提供日/周/项目/人物/会议/资源/待办总结的证据和统计。自然语言总结由当前AI完成。输出关键讨论、决定、待办、分歧、风险、来源；不要直接把规则候选当事实。
 5. 议题追踪：scan_sessions 传关键词及上下文 → get_message_context 精查 → prepare_chat_summary 汇总。
 6. 多群监控：configure_watchlist 明确保存会话/关键词/人 → poll_watchlist → read_watchlist_batch 按 nextOffset 读全 → 完成整理后 ack_watchlist_batch。首次默认只建基线；include_initial=true 可交付首次窗口。重复poll返回未确认批次。没有自动定时器；由客户端定时调用，或明确使用眼的 watch CLI。backlog/error 不会推进该群检查点。
-7. 附件：list_wechat_attachments → extract_wechat_attachment_text 或 search_wechat_attachment_text。自动关联仅给候选；导出正文只纳入 attachment_paths 明确选择的文件。
-8. 导出：export_wechat_package 写入项目 output/ 下唯一ZIP，含raw/selected/noise、audit、manifest、SHA-256。自由文本脱敏不全面，只是本地证据包，不能自动对外分享。
+7. 附件：list_wechat_attachments → extract_wechat_attachment_text 或 search_wechat_attachment_text。附件清单先看coverage；正文分块按offset_chars续读，搜索的partial/failures表示未覆盖，不能把未命中当成不存在。自动关联仅给候选；导出正文只纳入attachment_paths明确选择的文件。
+8. 导出：export_wechat_package写入项目output/下唯一ZIP，含raw/selected/noise、audit、manifest、SHA-256。自由文本脱敏不全面，只是本地证据包，不能自动对外分享。原始消息若带contentComplete=false，导出仍保留该完整性标记。
+9. text_only=true会把非文本正文替换成[多媒体]并标记contentSuppressed=true；这只是输出视图，不是媒体已经读取。
 
 时间均为Unix秒；统计时区默认Asia/Shanghai。来源引用必须同时包含sessionId、localId和timestamp。上游offset不是冻结快照，消息增长时可能重叠。摘要和批量工具默认每会话500条，单次最多10,000条；监控扫描最多20,000条，工具和响应均有边界。账户切换需要重新建立关注列表基线。`
 function registerAdvanced({ register, result, failure, server, request }) {

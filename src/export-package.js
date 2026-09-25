@@ -65,7 +65,7 @@ async function buildExportPackage(input) {
     const id = String(index + 1).padStart(4, '0')
     const relativeTextPath = `02-attachments/extracted-text/${id}-${safeName(item.fileName, 'attachment')}.txt`
     entries.set(relativeTextPath, String(item.text || ''))
-    attachmentManifest.push({ id, fileName: item.fileName || '', extension: path.extname(item.fileName || '').toLowerCase(), sha256: item.sha256 || '', size: item.size || 0, modifiedAt: item.modifiedAt || null, parser: item.parser || '', truncated: Boolean(item.truncated), originalChars: item.originalChars || 0, coverage: item.coverage || {}, warnings: item.warnings || [], extractedTextPath: relativeTextPath })
+    attachmentManifest.push({ id, fileName: item.fileName || '', extension: path.extname(item.fileName || '').toLowerCase(), sha256: item.sha256 || '', size: item.size || 0, modifiedAt: item.modifiedAt || null, parser: item.parser || '', truncated: Boolean(item.truncated), originalChars: item.originalChars || 0, returnedChars: Number.isInteger(item.returnedChars) ? item.returnedChars : String(item.text || '').length, offsetChars: Number.isInteger(item.offsetChars) ? item.offsetChars : 0, nextOffset: Number.isInteger(item.nextOffset) ? item.nextOffset : null, coverage: item.coverage || {}, warnings: item.warnings || [], extractedTextPath: relativeTextPath })
   }
   entries.set('02-attachments/errors.json', stableJson(redactIdentifiers(input.attachmentErrors || [])))
   entries.set('02-attachments/manifest.json', stableJson(attachmentManifest))

@@ -81,7 +81,7 @@
 
 ## 文件读取和证据包
 
-先调用 `list_wechat_attachments` 定位已下载文件，再将返回的路径传入 `extract_wechat_attachment_text`。正文过长时 `truncated` 表示不是全文。`search_wechat_attachment_text` 会返回扫描失败与完整性边界。
+先调用 `list_wechat_attachments` 定位已下载文件。返回的 `coverage` 标出目录遍历、文件返回上限和是否还有未列出的文件；若 `complete=false`，不能把当前清单当成全部附件。再将明确选定的路径传入 `extract_wechat_attachment_text`。返回的 `text` 是一个分块：`truncated=true` 时把 `nextOffset` 作为下一次的 `offset_chars`，直到 `nextOffset` 为 null。偏移量按 JavaScript 字符串的 UTF-16 码元计算，并会避开把一个 Emoji 拆成两半。`search_wechat_attachment_text` 对每个文件一次提取最多 100 万字符，不在这个预算内再切成 20 万字符；解析器缺失或不支持的文件会在 `failures` 中列出并使 `partial=true`。`partial=true` 且 `truncatedFiles`、`failures` 或 `coverage` 未完成时，尾部或文件正文尚未搜索，不能把未命中解释成文件里没有该词。证据 ZIP 的附件清单会带 `nextOffset`；导出默认最多纳入 100 万字符。
 
 `export_wechat_package` 会在眼的 `output/` 内创建唯一证据包。`attachment_paths` 必须是你明确选定的附件。`auto_link_attachments=true` 仅生成候选表，不因文件名或时间接近而自动提取其他群文件。
 

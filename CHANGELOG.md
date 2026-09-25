@@ -1,5 +1,30 @@
 # 变更记录
 
+## 4.1.6 — 2026-09-25
+
+- 统一消息完整性契约：识别 WxLens 的 `truncated`、`contentTruncated`、`rawContentTruncated`、`originalLength` 不一致和 zstd 未解码状态；精确回查会将这些情况标为 `partial`，分页结果和监控批次保留 `contentComplete` 与完整性统计。
+- 搜索、合并转发和聊天内文章读取不再按字符串长度挑选正文；完整可读的搜索索引正文优先于被 WxLens 截断的压缩字段，精确回查负责回填发送者、类型和稳定标识。
+- `text_only` 现在显式标记 `contentSuppressed`、原正文长度和替换原因；`[多媒体]` 仅是输出视图，不再被误认为媒体正文已经读取。
+- 关注列表身份键优先使用会话内稳定 `localId`/`serverId`，压缩正文解码前后不再因正文表示变化产生新身份；旧状态首次升级可能需要观察一次重叠批次。
+- 增加 `npm run optional:local` 本地模式：只探测并启用工作区或本机已有的 xlrd、RapidOCR/PyMuPDF、faster-whisper 解释器，不运行 pip、不联网、不下载模型；`doctor` 按能力报告 optional/pass。
+
+## 4.1.5 — 2026-09-24
+
+- WxLens 以 `28b52ffd` 开头的 zstd 十六进制正文会先解成 UTF-8 再进入列表、精确回查、上下文和关注批次。解压失败、解出空内容、不是 UTF-8 或超过 8MiB 时保留原字段并标记 `contentUndecoded`，不再把压缩十六进制说成未截断的明文。
+- 关键词搜索命中如果缺少发送者或消息类型，会在同一会话的有界扫描里按 `localId` 回填。发送者筛选和 `text_only` 使用回填后的字段。已解压的完整正文优先于搜索索引文本。
+- 附件正文搜索不再把正文关键词当成文件名过滤。文件名不含该词、正文含该词时仍会命中。按文件名筛选仍只属于 `list_wechat_attachments`。
+- 图片、表情和文件消息在 WxLens 没有给出本地路径时仍只保留占位符。眼不解密 `.dat`，也不按修改时间猜测文件归属。
+
+## 4.1.4 — 2026-09-24
+
+- 聊天消息不再由眼侧按 2000 字符截断。关注批次保留 WxLens 返回的完整 `content`，并给出 `contentChars` 与 `contentBytes`；只有上游明确报告截断时，`contentTruncated` 才为 true。
+- 新增 `get_message_by_id`：按会话和 `localId` 有界回查单条正文，未命中时返回 `nextOffset`，不把当前窗口未找到说成历史中不存在。
+- 合并转发和聊天内文章卡片优先回查原消息；分析 JSON 保留原始正文，Markdown 中的 300 字摘录和条数上限只是展示，并显式标记。
+- 附件正文支持 `offset_chars` / `nextOffset` 分块读取，分块不会拆开 Emoji。附件搜索对每个文件一次提取最多 100 万字符，不再按 20 万字符切开，因此预算内横跨旧分块边界的关键词不会被漏掉。仍有尾部时返回 `partial` 和 `truncatedFiles`。
+- 证据 ZIP 的附件清单写入 `returnedChars`、`offsetChars` 和 `nextOffset`。未指定 `max_chars_per_attachment` 时导出最多 100 万字符，而不是只留默认前 20 万字符。
+- 公众号解析不再把正文切到 20 万字符，也不再丢弃第 100 张之后的配图。读取和下载配图的序号上限同步放宽；每次下载仍最多 20 张。HTML 超过 4MiB 或存档超过 8MiB 时整份失败。
+- 单次 WxLens HTTP 响应仍限制 16MiB，关注批次持久化仍限制 16MiB；超限直接失败，不保存半截正文。
+
 ## 4.1.3 — 2026-09-16
 
 - 新增公众号候选账本：搜索结果自动去重入库，验证码中断后保留 remaining，可按状态查询。

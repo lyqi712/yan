@@ -4,13 +4,13 @@
 
 眼是一个 **MCP stdio 服务**。在 Proma、Claude Desktop、Cursor、Codex 或其他支持本地 MCP 的 AI 客户端中接入后，用自然语言提出任务。眼负责读取和组织有来源的材料，你的 AI 负责理解与总结。
 
-- **39 个工具**：保留基础读取与附件功能，增加人物跨会话、多群扫描、持久关注列表、公众号多轮发现、候选账本、文章正文与图片读取。
+- **40 个工具**：保留基础读取与附件功能，增加按消息 ID 回查全文、人物跨会话、多群扫描、持久关注列表、公众号多轮发现、候选账本、文章正文与图片读取。
 - **4 个工作流提示词**：聊天简报、人物提取、多群关注、议题追踪。
 - **本机只读微信**：连接已有的 WxLens 本机 HTTP 服务；不修改微信消息、不群发、不自动下载聊天附件。
 - **恢复进度**：关注批次可重试、分批读取和确认；单群失败不会把其他群的结果丢掉。
 - **接上就问**：首次在WxLens原界面完成初始化，此后在AI软件里直接提问；查询时可自动后台启动WxLens。
 
-> 当前版本：4.0.1。源自 WxLens Reader Extension 3.0.0 的改进版，显示名称统一为「眼」。微信查询仍依赖独立安装并初始化的 WxLens；本源码不包含 WxLens 安装器或微信账号数据。
+> 当前版本：4.1.6。源自 WxLens Reader Extension 3.0.0 的改进版，显示名称统一为「眼」。微信查询仍依赖独立安装并初始化的 WxLens；本源码不包含 WxLens 安装器或微信账号数据。
 
 ## 你可以直接这样问 AI
 
@@ -96,7 +96,7 @@ npm run config:mcp
 | 指定人物 | `get_messages_by_sender`、`extract_person_messages` | 按发送者 ID 精确提取，支持跨会话和上下文 |
 | 多群信息 | `scan_sessions` | 批量群聊、主题 any/all 匹配、时间和人物筛选、逐群续读 |
 | 聊天总结 | `prepare_chat_summary`、`analyze_wechat_chat` | 8 类总结目标，统计、规则候选和可引用原文；由 AI 撰写总结 |
-| 还原语境 | `get_message_context`、`read_merged_forward`、`read_wechat_post` | 前后消息、合并转发索引预览、本地文章卡片 |
+| 还原语境 | `get_message_by_id`、`get_message_context`、`read_merged_forward`、`read_wechat_post` | 按 ID 回查完整上游正文、前后消息、合并转发和本地文章卡片 |
 | 多群关注 | `configure_watchlist`、`list_watchlists`、`poll_watchlist`、`read_watchlist_batch`、`ack_watchlist_batch` | 保存关注规则、检查新增、续扫积压、重试与确认 |
 | 公众号文章与图片 | `search_wechat_articles`、`search_wechat_articles_batch`、`search_wechat_articles_tencent`、`list_article_candidates`、`update_article_candidate`、`fetch_wechat_article`、`import_wechat_article`、`read_article_image`、`download_article_images` | 多来源候选发现、可恢复账本、原文核验、配图返回；候选不是完整历史 |
 | 本地附件 | `list_wechat_attachments`、`extract_wechat_attachment_text`、`search_wechat_attachment_text` | 查找文件、提取正文、按正文搜索 |
@@ -136,14 +136,18 @@ CLI 将结果保存在 `.local/receipts/`，不自动发微信、邮件或外部
 
 公众号文章与图片也可通过 MCP 读取：`search_wechat_articles` 使用公开微信索引发现候选；`search_wechat_articles_tencent` 是可选的腾讯云 WSA SearchPro，限定公众号域名和最近 N 天，需用户自行开通服务并在客户端安全配置凭据。两种搜索都只是候选发现，不承诺完整公众号历史。`fetch_wechat_article` 读取公开文章，`import_wechat_article` 接收本人或 AI 浏览器正常打开后的 HTML 快照；`read_article_image` 返回原生 MCP `image` 内容块，`download_article_images` 保存带 SHA-256 清单的配图。聊天分享链接可用 `list_shared_articles` 提取；`read_wechat_image` 只读取调用方明确选定的标准本地图片，不解密 `.dat`。
 
-[可选运行时说明](docs/optional-runtime.md) 列出 Python、模型、ffmpeg、许可及已验证边界。缺少模型会明确提示，不在读取时自动下载模型。压缩包在解析前检查条目数和实际展开字节。
+[可选运行时说明](docs/optional-runtime.md) 列出 Python、模型、ffmpeg、许可及已验证边界。若本机已有可选 Python 模块，可运行 `npm run optional:local` 只做本地探测和启用，不运行 pip、不联网下载；`doctor` 会逐项显示 xlrd、OCR 和媒体解析状态。缺少模型会明确提示，不在读取时自动下载模型。压缩包在解析前检查条目数和实际展开字节。
 
 ## 覆盖与隐私
 
-- 基础单会话最多返回 5,000 条，扫描最多 20,000 条。批量工具每次总读取预算最多 10,000 条；每个群都有独立覆盖状态和续读 offset。
-- 关注列表每轮扫描预算最多 20,000 条，单群一次最多 5,000 条；更长积压可分轮追赶，单次追赶状态最多 50,000 个标识。监控正文最长返回 2,000 字符，截断时带标记和来源，可单独读取全文。
+- 眼不对单条聊天正文做字符截断，但必须尊重 WxLens 自己报告的 `truncated`/`contentTruncated`/长度不一致和未解码状态；精确回查会将这类结果标为 `partial`，分页和监控结果提供内容完整性统计。基础单会话最多返回 5,000 条，扫描最多 20,000 条；批量工具每次总读取预算最多 10,000 条。条数上限用 offset 续读，不是把一条长消息切短。
+- `text_only=true` 只是输出视图：非文本消息的正文会替换为 `[多媒体]`，同时标记 `contentSuppressed=true` 和原正文长度；它不表示图片、文件或音视频已经被读取。
+- 单次 WxLens HTTP 响应超过 16MiB 会整次失败。关注列表每轮最多扫描 20,000 条、单群一次最多 5,000 条，批次持久化超过 16MiB 会整轮拒绝且不推进进度。降低每群条数后重试，不能靠丢正文继续。
+- 关键词搜索沿用上游索引，单次最多 50 条命中。要核对某一条的完整 `content`，使用 `get_message_by_id`；当前窗口没有命中时看 `nextOffset`，不要当成整段历史不存在。搜索命中缺少发送者、类型或正文完整性标记时，眼会在同一会话有界回填；如果精确端点被截断，会优先保留可读的搜索正文并标明来源。
+- 附件清单会返回 `coverage`；目录遍历、文件数量或解析器上限导致未覆盖时，结果会明确标记。附件正文默认按块返回，`offset_chars` 使用 UTF-16 码元并避开拆开 Emoji。搜索对每个文件一次提取最多 100 万字符，不在预算内再切成 20 万字符。`truncated=true` 或 `truncatedFiles` 表示尾部还没读完；解析器缺失的文件进入 `failures`，不能把未搜索解释成不存在。证据 ZIP 会记录 `nextOffset`。分析 Markdown 里的短摘录只是展示，结构化 JSON 保留原始消息正文。
+- 公众号搜索结果里的标题和摘要是索引摘录。`fetch_wechat_article` / `import_wechat_article` 保存解析出的全文；HTML 超过 4MiB 或存档超过 8MiB 时整份失败。已收集文章不是该公众号的完整历史。
 - offset 分页不是冻结快照；上游数据增长、删除、索引延迟或历史回填可能影响结果。眼保留重复、失败和未覆盖边界，不承诺数据库级 exactly-once。
-- 合并转发、文章卡片仅代表本地索引暴露的内容，不保证完整原文。附件自动关联只给候选，提取到导出包必须显式指定路径。
+- 合并转发只在本地索引含有嵌套文本时完整；内部图片、文件和未入索引的嵌套消息不能据此宣称完整。附件自动关联只给候选，提取到导出包必须显式指定路径。
 - `.local/` 和 `output/` 可能包含私人数据。它们被 Git 和发行白名单排除，但不是加密存储。ZIP 的脱敏覆盖有限，分享前检查正文和附件。
 - 眼源码、依赖安装和可选模型各自有许可。WxLens、微信客户端、模型、数据库和安装器均不随源码发行。
 

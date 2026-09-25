@@ -5,9 +5,9 @@ const { z } = require('zod')
 const { registerAdvanced } = require('./advanced-tools')
 const { registerArticles } = require('./article-tools')
 const {
-  resolveAccountDir, getAllowedRoots, walkFiles, extractLocalFile, searchLocalFiles, parseMergedForwardSnippet, getParserCapabilities,
+  resolveAccountDir, getAllowedRoots, walkFiles, walkFilesDetailed, extractLocalFile, searchLocalFiles, parseMergedForwardSnippet, getParserCapabilities,
 } = require('./content-tools')
-const { fetchMessageRange, buildIncrementalWindow, buildSearchContextWindows, classifyAndSynthesize, renderMarkdown, resolveOwnedOutputDir } = require('./record-pipeline')
+const { fetchMessageRange, findMessageById, buildIncrementalWindow, buildSearchContextWindows, classifyAndSynthesize, renderMarkdown, resolveOwnedOutputDir, decodeStoredMessage, hydrateSearchHits, mergeMessageVariants, contentIntegrityOf } = require('./record-pipeline')
 const { buildExportPackage } = require('./export-package')
 const { associateAttachments } = require('./attachment-resolver')
 const fs = require('fs')
@@ -24,6 +24,31 @@ function result(data) {
 }
 function failure(error) {
   return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true }
+}
+function textOnlyView(message) {
+  if (Number(message?.type) === 1) return message
+  const original = String(message?.content || '')
+  return {
+    ...message,
+    content: '[多媒体]',
+    contentSuppressed: true,
+    contentSuppressionReason: 'text_only',
+    contentOriginalChars: Array.from(original).length,
+    contentOriginalBytes: Buffer.byteLength(original, 'utf8'),
+  }
+}
+async function collectMessageVariants(request, direct, params, queries) {
+  const searchHits = []
+  for (const keyword of queries) {
+    const data = await request('/api/search', { keyword, session_id: params.session_id, limit: 50 })
+    const messages = Array.isArray(data) ? data : (data?.messages || [])
+    for (const message of messages) {
+      if (Number(message.localId) === params.local_id) searchHits.push({ ...message, contentSource: 'search-index' })
+    }
+  }
+  const hydrated = await hydrateSearchHits(page => request('/api/messages', page), searchHits, { session_id: params.session_id, scan_limit: params.scan_limit || 2000 })
+  const variants = direct.found ? [{ ...direct.message, contentSource: 'exact-message' }, ...hydrated] : hydrated
+  return mergeMessageVariants(variants, params.session_id)
 }
 
 function accountContext() {
@@ -63,9 +88,10 @@ async function createServer(options = {}) {
   }, async params => {
     try {
       if (params.start_time && params.end_time && params.start_time > params.end_time) throw new Error('开始时间不能晚于结束时间')
-      const searchParams = { ...params }; delete searchParams.context_before; delete searchParams.context_after; delete searchParams.context_scan_limit
+      const searchParams = { ...params }; delete searchParams.context_before; delete searchParams.context_after; delete searchParams.context_scan_limit; delete searchParams.text_only
       const data = await request('/api/search', searchParams)
-      let messages = Array.isArray(data) ? data : (data?.messages || [])
+      const rawSearchHits = Array.isArray(data) ? data : (data?.messages || [])
+      let messages = await hydrateSearchHits(page => request('/api/messages', page), rawSearchHits.map(message => ({ ...message, contentSource: 'search-index' })), { session_id: params.session_id, scan_limit: params.context_scan_limit || 2000 })
       if (params.sender_id) messages = messages.filter(m => String(m.senderId || m.sender_id || m.sender || '') === params.sender_id)
       if (params.message_types?.length) messages = messages.filter(m => params.message_types.includes(Number(m.type)))
       const wantsContext = Number(params.context_before || 0) > 0 || Number(params.context_after || 0) > 0
@@ -78,12 +104,18 @@ async function createServer(options = {}) {
           sourceMessages.push(...page.messages.map(message => ({ ...message, sessionId: message.sessionId || sessionId })))
         }
         const hits = messages.map(message => ({ ...message, sessionId: message.sessionId || message.session_id || params.session_id || '' }))
-        context = buildSearchContextWindows(sourceMessages, hits, params)
-        if (params.text_only) context.windows = context.windows.map(window => ({ ...window, messages: window.messages.map(message => Number(message.type) === 1 ? message : { ...message, content: '[多媒体]' }) }))
+        const hitByReference = new Map(hits.map(message => [`${message.sessionId}:${Number(message.localId)}`, message]))
+        const contextMessages = sourceMessages.map(message => {
+          const hit = hitByReference.get(`${message.sessionId}:${Number(message.localId)}`)
+          return hit ? mergeMessageVariants([message, hit], message.sessionId)[0] : message
+        })
+        context = buildSearchContextWindows(contextMessages, hits, params)
+        if (params.text_only) context.windows = context.windows.map(window => ({ ...window, messages: window.messages.map(textOnlyView) }))
       }
-      if (params.text_only) messages = messages.map(m => Number(m.type) === 1 ? m : { ...m, content: '[多媒体]' })
-      if (wantsContext) return result({ ...(data?.formatVersion ? data : {}), messages, returned: messages.length, context, boundary: '搜索与上下文仅覆盖本次索引命中和有界扫描。按人精确扫描可使用 get_messages_by_sender。' })
-      return result({ ...(Array.isArray(data) ? {} : data), messages, returned: messages.length, boundary: '上游关键词结果最多50条，发送者与类型筛选只作用于这些命中。完整按人扫描请用extract_person_messages或get_messages_by_sender。' })
+      if (params.text_only) messages = messages.map(textOnlyView)
+      const boundary = `搜索与上下文仅覆盖本次索引命中和有界扫描。${params.text_only ? 'text_only会将非文本消息正文替换为[多媒体]，并以contentSuppressed=true标记；这不是媒体正文读取。' : ''}按人精确扫描可使用 get_messages_by_sender。`
+      if (wantsContext) return result({ ...(data?.formatVersion ? data : {}), messages, returned: messages.length, context, boundary })
+      return result({ ...(Array.isArray(data) ? {} : data), messages, returned: messages.length, boundary: `上游关键词结果最多50条，发送者与类型筛选只作用于这些命中。${params.text_only ? 'text_only会将非文本消息正文替换为[多媒体]并标记contentSuppressed=true；需要媒体证据请改用附件/图片工具。' : ''}完整按人扫描请用extract_person_messages或get_messages_by_sender。` })
     } catch (e) { return failure(e) }
   })
 
@@ -96,9 +128,15 @@ async function createServer(options = {}) {
       const data = await fetchMessageRange(async ({ limit, offset }) => request('/api/messages', { session_id: params.session_id, limit, offset }), params)
       let messages = data.messages
       if (params.message_types?.length) messages = messages.filter(m => params.message_types.includes(Number(m.type)))
-      if (params.text_only) messages = messages.map(m => Number(m.type) === 1 ? m : { ...m, content: '[多媒体]' })
+      if (params.text_only) messages = messages.map(textOnlyView)
       return result({ ...data, messages, returned: messages.length })
     } catch (e) { return failure(e) }
+  })
+
+  register('get_message_by_id', '按单个会话和稳定localId有界回查WxLens提供的content字段；不做眼侧字符截断，可用nextOffset续读。', {
+    session_id: z.string().min(1), local_id: z.number().int().positive(), scan_limit: z.number().int().positive().max(20000).optional(), page_size: z.number().int().positive().max(100).optional(), offset: z.number().int().nonnegative().optional(),
+  }, async params => {
+    try { return result(await findMessageById(page => request('/api/messages', page), params)) } catch (error) { return failure(error) }
   })
 
   register('list_contacts', '查询微信联系人信息', {
@@ -108,48 +146,53 @@ async function createServer(options = {}) {
   register('check_new_messages', '检查最近有新消息的会话，或检查指定会话是否有新消息', {
     session_id: z.string().optional(), since_minutes: z.number().int().positive().max(10080).optional(), limit: z.number().int().positive().max(100).optional(),
     sender_id: z.string().optional(), text_only: z.boolean().optional(), message_types: z.array(z.number().int().nonnegative()).max(20).optional(),
-  }, async params => { try { return result(await request('/api/new-messages', params)) } catch (e) { return failure(e) } })
-
-  register('read_merged_forward', '读取一条微信合并转发聊天记录。使用 session_id + local_id；返回当前数据库可检索到的嵌套文本，并明确是否为完整原始记录。', {
-    session_id: z.string().min(1), local_id: z.number().int().positive(), keyword_hint: z.string().optional(), max_queries: z.number().int().positive().max(20).optional(),
   }, async params => {
     try {
+      const upstreamParams = { ...params }
+      delete upstreamParams.text_only
+      const data = await request('/api/new-messages', upstreamParams)
+      const apply = rows => (rows || []).map(decodeStoredMessage).map(message => ({ ...message, contentIntegrity: contentIntegrityOf(message), contentComplete: contentIntegrityOf(message).complete })).map(params.text_only ? textOnlyView : message => message)
+      if (Array.isArray(data)) return result(apply(data))
+      if (Array.isArray(data?.messages)) return result({ ...data, messages: apply(data.messages) })
+      return result(data)
+    } catch (e) { return failure(e) }
+  })
+
+  register('read_merged_forward', '读取一条微信合并转发聊天记录。先按session_id + local_id精确回查，再用有限关键词查询补充索引变体；返回当前数据库可见的嵌套文本，并明确是否为完整原始记录。', {
+    session_id: z.string().min(1), local_id: z.number().int().positive(), keyword_hint: z.string().optional(), max_queries: z.number().int().positive().max(20).optional(), scan_limit: z.number().int().positive().max(20000).optional(), page_size: z.number().int().positive().max(100).optional(), offset: z.number().int().nonnegative().optional(),
+  }, async params => {
+    try {
+      const direct = await findMessageById(page => request('/api/messages', page), params)
       const queries = [...new Set([params.keyword_hint, '聊天记录', '群聊', '与', '图片', '文件'].filter(Boolean))].slice(0, params.max_queries || 8)
-      const hits = []
-      for (const keyword of queries) {
-        const data = await request('/api/search', { keyword, session_id: params.session_id, limit: 50 })
-        const messages = Array.isArray(data) ? data : (data?.messages || [])
-        for (const message of messages) if (Number(message.localId) === params.local_id) hits.push(message)
-      }
-      const unique = [...new Map(hits.map(hit => [String(hit.content || ''), hit])).values()]
-      const best = unique.sort((a, b) => String(b.content || '').length - String(a.content || '').length)[0]
-      if (!best) return result({ found: false, sessionId: params.session_id, localId: params.local_id, queries, boundary: 'No searchable nested text found. The card may be absent from the current FTS index.' })
+      const variants = await collectMessageVariants(request, direct, params, queries)
+      const best = variants[0]
+      if (!best) return result({ found: false, sessionId: params.session_id, localId: params.local_id, queries, directLookup: direct, boundary: '当前有界消息扫描和关键词索引都没有找到该消息；可使用directLookup.coverage.nextOffset继续扫描。' })
+      const content = String(best.content || '')
+      const contentIntegrity = { ...(best.contentIntegrity || contentIntegrityOf(best)), source: best.contentSource || 'unknown' }
+      const sourceIsExact = ['exact-message', 'session-message'].includes(best.contentSource)
       return result({
-        found: true, sessionId: params.session_id, localId: params.local_id, source: 'WxLens searchable message index',
-        completeness: 'indexed-preview', completeOriginal: false, parsed: parseMergedForwardSnippet(best.content),
-        rawHit: best, queries, variantsFound: unique.length,
-        boundary: 'This is the longest searchable nested-text preview currently exposed by WxLens, not proof of the full original nested transcript or embedded media.',
+        found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? 'WxLens /api/messages exact lookup' : 'WxLens exact lookup plus searchable message index',
+        completeness: sourceIsExact ? 'source-message-content' : 'indexed-preview', completeOriginal: false,
+        contentIntegrity, parsed: parseMergedForwardSnippet(content), rawHit: best, queries, variantsFound: variants.length, directLookup: direct,
+        boundary: '已按正文完整性和来源选择最可读的单条消息content；合并转发内部媒体、未入本地索引的嵌套消息和原始数据库结构仍不能据此宣称完整。',
       })
     } catch (e) { return failure(e) }
   })
 
-  register('read_wechat_post', '读取微信聊天中的帖子、文章、链接卡片或长文本。优先返回数据库中的可检索正文；外部网页不会自动联网抓取。', {
-    session_id: z.string().min(1), local_id: z.number().int().positive(), keyword_hint: z.string().optional(), max_queries: z.number().int().positive().max(20).optional(),
+  register('read_wechat_post', '读取微信聊天中的帖子、文章、链接卡片或长文本。先按session_id + local_id精确回查，再用有限关键词查询补充索引变体；外部网页不会自动联网抓取。', {
+    session_id: z.string().min(1), local_id: z.number().int().positive(), keyword_hint: z.string().optional(), max_queries: z.number().int().positive().max(20).optional(), scan_limit: z.number().int().positive().max(20000).optional(), page_size: z.number().int().positive().max(100).optional(), offset: z.number().int().nonnegative().optional(),
   }, async params => {
     try {
+      const direct = await findMessageById(page => request('/api/messages', page), params)
       const queries = [...new Set([params.keyword_hint, '文章', '公众号', '帖子', 'http', '阅读', '小红书', '知乎', '内容'].filter(Boolean))].slice(0, params.max_queries || 10)
-      const hits = []
-      for (const keyword of queries) {
-        const data = await request('/api/search', { keyword, session_id: params.session_id, limit: 50 })
-        const messages = Array.isArray(data) ? data : (data?.messages || [])
-        for (const message of messages) if (Number(message.localId) === params.local_id) hits.push(message)
-      }
-      const unique = [...new Map(hits.map(hit => [String(hit.content || ''), hit])).values()]
-      const best = unique.sort((a, b) => String(b.content || '').length - String(a.content || '').length)[0]
-      if (!best) return result({ found: false, sessionId: params.session_id, localId: params.local_id, queries, boundary: 'No indexed post/article text found.' })
+      const variants = await collectMessageVariants(request, direct, params, queries)
+      const best = variants[0]
+      if (!best) return result({ found: false, sessionId: params.session_id, localId: params.local_id, queries, directLookup: direct, boundary: '当前有界消息扫描和关键词索引都没有找到该消息；可使用directLookup.coverage.nextOffset继续扫描。' })
       const content = String(best.content || '').replace(/\u0008/g, '\n')
       const urls = [...new Set(content.match(/https?:\/\/[^\s<>"']+/g) || [])]
-      return result({ found: true, sessionId: params.session_id, localId: params.local_id, source: 'WxLens searchable message index', content, urls, rawHit: best, variantsFound: unique.length, boundary: 'Returns locally indexed card/article text. External URL body is not fetched automatically.' })
+      const contentIntegrity = { ...(best.contentIntegrity || contentIntegrityOf(best)), source: best.contentSource || 'unknown' }
+      const sourceIsExact = ['exact-message', 'session-message'].includes(best.contentSource)
+      return result({ found: true, sessionId: params.session_id, localId: params.local_id, source: sourceIsExact ? 'WxLens /api/messages exact lookup' : 'WxLens exact lookup plus searchable message index', completeness: sourceIsExact ? 'source-message-content' : 'indexed-preview', content, urls, rawHit: best, variantsFound: variants.length, directLookup: direct, contentIntegrity, boundary: '已按正文完整性和来源选择最可读的单条消息content；这里只读取本地索引正文，不自动抓取外部URL页面。' })
     } catch (e) { return failure(e) }
   })
 
@@ -157,12 +200,15 @@ async function createServer(options = {}) {
     keyword: z.string().optional(), extensions: z.array(z.string()).max(50).optional(), limit: z.number().int().positive().max(2000).optional(),
     start_time: z.number().int().nonnegative().optional(), end_time: z.number().int().nonnegative().optional(),
   }, async params => {
-    try { const ctx = accountContext(); return result({ accountDir: ctx.accountDir, roots: ctx.roots.map(p => p.replace(/\\/g, '/')), files: walkFiles(ctx.roots, params) }) }
+    try {
+      const ctx = accountContext(); const listing = walkFilesDetailed(ctx.roots, params)
+      return result({ accountDir: ctx.accountDir, roots: ctx.roots.map(p => p.replace(/\\/g, '/')), files: listing.files, coverage: listing.coverage })
+    }
     catch (e) { return failure(e) }
   })
 
   register('extract_wechat_attachment_text', '提取已下载微信文件正文或媒体证据。支持常见文档、表格、演示、电子书、文本、ZIP文本项、图片OCR，以及音视频本地ASR、关键帧OCR和时间戳证据。', {
-    source_path: z.string().min(1), max_chars: z.number().int().positive().max(1000000).optional(),
+    source_path: z.string().min(1), max_chars: z.number().int().positive().max(1000000).optional(), offset_chars: z.number().int().nonnegative().max(100000000).optional(),
   }, async params => {
     try { const ctx = accountContext(); return result(await extractLocalFile(params.source_path, ctx.roots, params)) }
     catch (e) { return failure(e) }
@@ -170,7 +216,7 @@ async function createServer(options = {}) {
 
   register('search_wechat_attachment_text', '在微信已下载的本地文件正文中搜索关键词；只读扫描，不修改微信文件或数据库。', {
     keyword: z.string().min(1), extensions: z.array(z.string()).max(50).optional(), limit: z.number().int().positive().max(200).optional(),
-    scan_limit: z.number().int().positive().max(2000).optional(), start_time: z.number().int().nonnegative().optional(), end_time: z.number().int().nonnegative().optional(),
+    scan_limit: z.number().int().positive().max(2000).optional(), max_chars_per_file: z.number().int().positive().max(1000000).optional(), start_time: z.number().int().nonnegative().optional(), end_time: z.number().int().nonnegative().optional(),
   }, async params => {
     try { const ctx = accountContext(); return result(await searchLocalFiles(params.keyword, ctx.roots, params)) }
     catch (e) { return failure(e) }
@@ -223,7 +269,7 @@ async function createServer(options = {}) {
         association.boundary = '文件名和时间仅生成候选，不证明会话归属；请明确选择 attachment_paths 后提取。'
       }
       for (const sourcePath of [...new Set(explicitPaths)]) {
-        try { attachments.push(await extractLocalFile(sourcePath, ctx.roots, { max_chars: params.max_chars_per_attachment })) }
+        try { attachments.push(await extractLocalFile(sourcePath, ctx.roots, { max_chars: params.max_chars_per_attachment || 1000000 })) }
         catch (error) { attachmentErrors.push({ fileName: path.basename(sourcePath), message: error.message }) }
       }
       const outputDir = resolveOwnedOutputDir(params.session_id, params.output_dir)
@@ -240,11 +286,12 @@ async function createServer(options = {}) {
       try { ctx = accountContext() } catch {}
       return result({
         version: VERSION, accountDir: ctx.accountDir, roots: ctx.roots.map(p => p.replace(/\\/g, '/')),
-        messageRead: { maxPerCall: 5000, sourcePageSize: 100, supportsOffset: true, supportsTimeRange: true, supportsCallerManagedIncrementalCursor: true },
+        messageRead: { maxPerCall: 5000, sourcePageSize: 100, supportsOffset: true, supportsTimeRange: true, supportsCallerManagedIncrementalCursor: true, perMessageCharacterCap: null, singleResponseByteCap: 16 * 1024 * 1024, watchlistBatchByteCap: 16 * 1024 * 1024 },
+        attachmentText: { defaultReturnedChars: 200000, maxReturnedChars: 1000000, searchDefaultCharsPerFile: 1000000, offsetField: 'offset_chars', continuationField: 'nextOffset', offsetUnit: 'UTF-16 code units with surrogate-pair boundaries preserved' },
         parsers: getParserCapabilities(),
         capabilities: ['text chat', '5000-message paginated read', 'bounded merged search context windows', 'quality-gated evidence-linked classification', 'message-function labels', 'question-response-resolution context threads', 'evidence-linked decision-task-risk-result work register', 'merged-forward indexed preview', 'post/article indexed text', 'multi-format local attachment extraction', 'image OCR', 'local timed ASR and keyframe OCR', 'portable audited ZIP export'],
         safety: { wechatDatabaseWrites: false, privateProtocol: false, automaticAccountDownload: false, processInjection: false, networkArticleFetch: true },
-        limitations: ['Article history covers collected URLs only, not complete account history. Public HTTP may require browser verification; import an explicitly opened page without cookies.', 'MCP image content requires client/model image support; encrypted DAT images are unsupported.', 'Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
+        limitations: ['Yan does not slice individual chat message text, but it preserves and surfaces WxLens truncation/length/decode status; exact lookup returns partial when the source is incomplete. A WxLens HTTP response over 16MiB or a watchlist batch over 16MiB fails the whole operation instead of dropping text.', 'Keyword search uses the upstream index and returns at most 50 hits per call. Hits missing sender, type or complete-content metadata are filled from the same localId within a bounded session scan; exact reads use session pagination and get_message_by_id. Zstd hex text beginning with 28b52ffd is decoded to UTF-8, and undecodable payloads stay marked instead of being treated as plain text. Image, emoji, and file rows stay placeholders when WxLens supplies no local path; encrypted DAT files are not decrypted.', 'text_only is an explicit presentation mode: non-text content becomes [多媒体] with contentSuppressed=true and is not evidence that the media body was read.', 'Article history covers collected URLs only, not complete account history. Parsed article text is kept in full, but HTML over 4MiB or an archive over 8MiB fails instead of saving a partial body. Public HTTP may require browser verification; import an explicitly opened page without cookies.', 'Search-result titles and excerpts are index snippets, not article bodies.', 'MCP image content requires client/model image support; encrypted DAT images are unsupported. Returned images are capped at 4MiB.', 'Merged-forward records are complete only when the local searchable index contains the full nested text.', 'Missing attachments must be downloaded/opened in the official WeChat client first. Attachment listing and content search expose coverage, parser failures and tail continuation; an incomplete coverage result cannot be interpreted as a complete no-match.', 'Markdown digests excerpt evidence for display; structured analysis JSON keeps the original message content.', 'Image and scanned-PDF OCR uses the isolated local RapidOCR PP-OCRv6 ONNX runtime when installed.', 'Timed ASR requires a locally cached faster-whisper model; first model download needs network access, after which inference stays local.'],
       })
     } catch (e) { return failure(e) }
   })

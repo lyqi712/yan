@@ -20,7 +20,13 @@ async function diagnose(options = {}) {
   const account = config.accountDir && fs.existsSync(config.accountDir) ? config.accountDir : (accounts.length === 1 ? accounts[0] : '')
   checks.push({ id: 'attachments', status: account && getAllowedRoots(account).length ? 'pass' : 'optional', title: '附件目录', detail: account && getAllowedRoots(account).length ? '已找到本地附件目录' : accounts.length > 1 ? '发现多个账号，请用config --account-dir明确选择' : '尚未指定；聊天检索不依赖此项' })
   const capabilities = getParserCapabilities()
-  for (const [id, title, available] of [['ocr', '图片 / 扫描 PDF', capabilities.engines.highAccuracyOcr], ['media', '音视频深读', capabilities.engines.mediaDeepReader]]) checks.push({ id, status: available ? 'pass' : 'optional', title, detail: available ? '运行时入口存在；模型仍需单独验证' : '可选组件未安装，不影响基础聊天和常见文档读取' })
+  const { runtimeStatus } = require('./optional-runtime')
+  const optionalRuntime = runtimeStatus()
+  for (const [id, title, available, detail] of [
+    ['ocr', '图片 / 扫描 PDF', capabilities.engines.highAccuracyOcr, optionalRuntime.interpreters.ocr],
+    ['media', '音视频深读', capabilities.engines.mediaDeepReader, optionalRuntime.interpreters.media],
+    ['xls', '旧 XLS', capabilities.engines.legacyXls, optionalRuntime.interpreters.xls],
+  ]) checks.push({ id, status: available ? 'pass' : 'optional', title, detail: available ? `本地解析器可用${detail?.modules ? '，Python模块可加载' : ''}` : '可选组件未就绪；可运行 npm run optional:local 仅探测本机已有模块，不联网安装' })
   return { ok: checks.every(item => item.status !== 'fail'), checks, capabilities, configFile: CONFIG_FILE, nextStep: checks.some(item => item.id === 'service' && item.status === 'fail') ? '首次运行setup.cmd，在WxLens原界面完成微信登录、密钥获取和索引初始化，再运行doctor。日常查询可自动后台启动。' : '将MCP配置合并到AI客户端，重新加载后直接提问；先调用list_sessions定位目标群。', mcpConfigs: renderMcpConfigs() }
 }
 

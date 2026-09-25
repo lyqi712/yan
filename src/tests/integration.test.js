@@ -16,22 +16,25 @@ async function fixture(t, handler) {
   const server = http.createServer(handler); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => { server.closeAllConnections(); server.close() }); return `http://127.0.0.1:${server.address().port}`
 }
-test('真实stdio MCP握手、发现39工具/4提示词/资源并调用跨群提取', { timeout: 20000 }, async t => {
+test('真实stdio MCP握手、发现40工具/4提示词/资源并调用跨群提取', { timeout: 20000 }, async t => {
   const base = await fixture(t, (req, res) => {
     const url = new URL(req.url, 'http://fixture'); let data = {}
-    if (url.pathname === '/api/messages') data = { messages: Number(url.searchParams.get('offset')) ? [] : [{ localId: 1, timestamp: 100, senderId: 'person-a', senderName: '虚构人物', content: '周五验收', type: 1 }] }
+    if (url.pathname === '/api/messages') data = { messages: Number(url.searchParams.get('offset')) ? [] : [{ localId: 1, timestamp: 100, senderId: 'person-a', senderName: '虚构人物', content: '长消息🙂中文内容'.repeat(500) + '完整结尾-marker', type: 1 }] }
     if (url.pathname === '/api/sessions') data = [{ id: 'synthetic-group', name: '虚构群聊' }]
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, data }))
   })
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.resolve(__dirname, '../server.js')], env: { ...process.env, WXLENS_HTTP_BASE_URL: base, WXLENS_ACCOUNT_DIR: '', WXLENS_AUTO_START: 'false' }, stderr: 'pipe' })
   const client = new Client({ name: 'yan-acceptance', version: '1.0.0' }); t.after(() => client.close()); await client.connect(transport)
-  const tools = (await client.listTools()).tools; assert.equal(tools.length, 39)
+  const tools = (await client.listTools()).tools; assert.equal(tools.length, 40)
   assert.equal(tools.find(tool => tool.name === 'configure_watchlist').annotations.readOnlyHint, false)
   assert.equal((await client.listPrompts()).prompts.length, 4); assert.equal((await client.listResources()).resources[0].uri, 'yan://guide')
   assert.match((await client.readResource({ uri: 'yan://guide' })).contents[0].text, /人物/)
   const response = await client.callTool({ name: 'extract_person_messages', arguments: { session_ids: ['synthetic-group'], sender_ids: ['person-a'] } })
   assert.equal(response.isError, undefined); const data = JSON.parse(response.content[0].text)
   assert.equal(data.totalReturned, 1); assert.equal(data.sessions[0].messages[0].sourceRef.sessionId, 'synthetic-group')
+  const exact = await client.callTool({ name: 'get_message_by_id', arguments: { session_id: 'synthetic-group', local_id: 1 } })
+  assert.equal(exact.isError, undefined); const exactData = JSON.parse(exact.content[0].text)
+  assert.equal(exactData.found, true); assert.match(exactData.message.content, /完整结尾-marker$/); assert.equal(exactData.contentIntegrity.sourceReportedTruncated, false)
   const invalid = await client.callTool({ name: 'get_recent_messages', arguments: { session_id: 'g', limit: 0 } }); assert.equal(invalid.isError, true)
 })
 test('上游挂起能超时、重定向不跟随、错误不泄露上游正文', { timeout: 10000 }, async t => {
@@ -60,4 +63,16 @@ test('导出保留raw/selected/noise分账，README和正文哈希真实一致�
   assert.ok(manifest.files.some(f => f.path === 'README.md'))
   for (const f of manifest.files) assert.equal(createHash('sha256').update(await zip.file(f.path).async('nodebuffer')).digest('hex'), f.sha256)
   assert.equal(result.integrity.contentHashesChecked, true); assert.equal(manifest.counts.rawMessages, manifest.counts.selectedMessages + manifest.counts.noiseMessages)
+})
+test('导出附件清单在正文被截断时保留续读位置', async t => {
+  const output = path.resolve(__dirname, '../../output', 'test-' + randomUUID()); t.after(() => fs.rmSync(output, { recursive: true, force: true }))
+  const rows = [{ localId: 1, sessionId: 'g', timestamp: 100, content: '合成消息', type: 1 }]
+  const result = await buildExportPackage({ outputDir: output, session: { name: '合成群' }, pagination: { complete: true }, rawMessages: rows, synthesis: classifyAndSynthesize(rows), attachments: [{ fileName: 'long.txt', text: '甲'.repeat(10), truncated: true, originalChars: 30, returnedChars: 10, offsetChars: 0, nextOffset: 10, sha256: 'abc', size: 30, parser: 'text', coverage: {}, warnings: [] }] })
+  const zip = await JSZip.loadAsync(fs.readFileSync(result.zipPath), { checkCRC32: true })
+  const attachments = JSON.parse(await zip.file('02-attachments/manifest.json').async('text'))
+  assert.equal(attachments[0].truncated, true)
+  assert.equal(attachments[0].returnedChars, 10)
+  assert.equal(attachments[0].offsetChars, 0)
+  assert.equal(attachments[0].nextOffset, 10)
+  assert.equal(await zip.file(attachments[0].extractedTextPath).async('text'), '甲'.repeat(10))
 })

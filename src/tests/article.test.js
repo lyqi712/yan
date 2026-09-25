@@ -6,6 +6,7 @@ const path = require('node:path')
 const { parseArticle, createArticleStore, extractArticleLinks, filterArticleHistory } = require('../wechat-articles')
 const { validateUrl, publicAddress, fetchPublic } = require('../public-web')
 const { imageContent } = require('../image-content')
+const { registerArticles } = require('../article-tools')
 const url = 'https://mp.weixin.qq.com/s/example'
 const html = '<h1 id="activity-name">示例文章</h1><a id="js_name">示例号</a><em id="publish_time">2026年9月14日 14:54</em><div id="js_content"><p>第一段 &amp; 证据</p><img data-src="https://mmbiz.qpic.cn/mmbiz_png/abc/640"/><p>第二段</p><script>bad()</script><img src="http://127.0.0.1/secret"/></div><script>var biz = "ABC123==";</script>'
 test('公众号解析保留图文顺序、北京时间、身份和不支持图片边界，不执行网页脚本', () => {
@@ -14,6 +15,25 @@ test('公众号解析保留图文顺序、北京时间、身份和不支持图�
  assert.equal(a.images.length,1); assert.equal(a.coverage.skippedImages,1); assert.equal(a.coverage.partial,true)
  assert.ok(a.markdown.indexOf('第一段') < a.markdown.indexOf('![配图1]')); assert.ok(a.markdown.indexOf('![配图1]') < a.markdown.indexOf('第二段')); assert.ok(!a.markdown.includes('bad()'))
  assert.throws(()=>parseArticle('<div>环境异常 完成验证</div>',url), /验证|正文/)
+})
+test('公众号长正文和超过100张配图都完整保留，不按旧上限切片', () => {
+ const body = `${'长文🙂'.repeat(70000)}结尾标记`
+ const images = Array.from({ length: 101 }, (_, index) => `<img data-src="https://mmbiz.qpic.cn/mmbiz_png/abc/${index}"/>`).join('')
+ const longHtml = `<h1 id="activity-name">长文</h1><div id="js_content"><p>${body}</p>${images}</div>`
+ const article = parseArticle(longHtml, url)
+ assert.ok(article.coverage.originalChars > 200000)
+ assert.equal(article.coverage.textTruncated, false)
+ assert.equal(article.coverage.returnedChars, article.coverage.originalChars)
+ assert.equal(article.markdown.includes('结尾标记'), true)
+ assert.equal(article.images.length, 101)
+ assert.equal(article.coverage.imagesReturned, 101)
+})
+test('已保留的第101张配图序号可以通过读取和下载工具校验', () => {
+ const schemas = {}
+ registerArticles({ register: (name, _description, schema) => { schemas[name] = schema }, result: value => value, failure: error => error, request: async () => [], accountContext: () => ({ roots: [] }), store: {}, candidateStore: { upsert() {}, verify() {}, list() {}, update() {} } })
+ assert.equal(schemas.read_article_image.image_index.safeParse(101).success, true)
+ assert.equal(schemas.download_article_images.image_indices.safeParse([101]).success, true)
+ assert.equal(schemas.download_article_images.image_indices.safeParse(Array.from({ length: 21 }, (_, index) => index + 1)).success, false)
 })
 test('公网地址与路径限制阻止SSRF、凭据、私网和非文章端点', async () => {
  for(const bad of ['https://mp.weixin.qq.com@127.0.0.1/s/a','https://mp.weixin.qq.com:444/s/a','http://mp.weixin.qq.com/s/a','https://mp.weixin.qq.com/cgi-bin/home','https://mp.weixin.qq.com/s/a?token=secret']) assert.throws(()=>validateUrl(bad,'article'))

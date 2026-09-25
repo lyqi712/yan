@@ -3,11 +3,51 @@ const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { ROOT, readConfig } = require('./config')
 const { contains, canonical } = require('./path-safety')
-const { identityOf, evidenceOf, matches, keywordHits } = require('./session-tools')
-const { unwrapMessages } = require('./record-pipeline')
+const { identityOf, legacyIdentityOf, previousStableIdentityOf, evidenceOf, matches, keywordHits } = require('./session-tools')
+const { unwrapMessages, contentIntegrityOf, summarizeContentIntegrity } = require('./record-pipeline')
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/
-const BOUNDARY = '按调用轮询，不自行常驻或发送通知。只覆盖指定会话的本地索引；依赖上游最新消息在前的顺序，索引延迟或历史回填不保证发现。首次建立当前窗口基线，不宣称历史全量。批次需读取完整并确认后才提交检查点。'
+const BOUNDARY = '按调用轮询，不自行常驻或发送通知。只覆盖指定会话的本地索引；依赖上游最新消息在前的顺序，索引延迟或历史回填不保证发现。首次建立当前窗口基线，不宣称历史全量。批次需读取完整并确认后才提交检查点。消息会保留上游正文完整性标记；contentComplete=false时不能当作完整正文。'
+function identityKeys(message) {
+  return [...new Set([identityOf(message), previousStableIdentityOf(message), legacyIdentityOf(message)])]
+}
+function contentStats(value) {
+  const content = value == null ? '' : String(value)
+  return { content, contentChars: Array.from(content).length, contentBytes: Buffer.byteLength(content, 'utf8') }
+}
+function sourceReportedContentTruncated(message) {
+  return ['contentTruncated', 'content_truncated', 'truncated', 'rawContentTruncated'].some(key => message?.[key] === true || message?.[key] === 1 || (typeof message?.[key] === 'string' && message[key].trim().toLowerCase() === 'true'))
+}
+function deliveryMessage(message, sessionId, keywords) {
+  const { content, contentChars, contentBytes } = contentStats(message.content)
+  const integrity = contentIntegrityOf(message)
+  return {
+    sourceRef: evidenceOf(message).sourceRef,
+    evidenceId: identityOf(message).slice(0, 20),
+    sessionId,
+    sourceOffset: message.sourceOffset,
+    localId: message.localId,
+    serverId: message.serverId,
+    timestamp: Number(message.timestamp),
+    ...(message.time !== undefined ? { time: message.time } : {}),
+    senderId: String(message.senderId || message.sender_id || message.sender || ''),
+    senderName: String(message.senderName || ''),
+    ...(message.isSelf !== undefined ? { isSelf: Boolean(message.isSelf) } : {}),
+    ...(message.isSend !== undefined ? { isSend: message.isSend } : {}),
+    ...(message.nameResolved !== undefined ? { nameResolved: Boolean(message.nameResolved) } : {}),
+    type: message.type,
+    ...(message.typeName !== undefined ? { typeName: message.typeName } : {}),
+    content,
+    contentChars,
+    contentBytes,
+    contentTruncated: sourceReportedContentTruncated(message),
+    contentDecoded: integrity.contentDecoded,
+    contentUndecoded: integrity.contentUndecoded,
+    contentComplete: integrity.complete,
+    ...(message.originalLength !== undefined ? { contentOriginalLength: message.originalLength } : {}),
+    matchedKeywords: keywordHits(message, { keywords }),
+  }
+}
 function createWatchStore(options = {}) {
   const root = path.resolve(options.root || path.join(ROOT, '.local', 'watchlists'))
   const config = options.config || (() => readConfig())
@@ -35,7 +75,8 @@ function createWatchStore(options = {}) {
     if (offset > batch.servedThrough) throw new Error('请按 nextOffset 顺序读取批次，避免跳过消息')
     const rows = batch.messages.slice(offset, offset + limit)
     batch.servedThrough = Math.max(batch.servedThrough, offset + rows.length)
-    return { watchlistId: state.id, batchId: batch.id, createdAt: batch.createdAt, groups: batch.groups, messages: rows, delivery: { offset, returned: rows.length, total: batch.messages.length, nextOffset: offset + rows.length, complete: offset + rows.length >= batch.messages.length, acknowledged: false }, partial: batch.groups.some(g => ['error', 'backlog', 'order-unverified', 'identity-unavailable', 'catching-up', 'baseline-building'].includes(g.status)), instruction: '继续读取所有分页并完成用户要求的整理后，再调用 ack_watchlist_batch。重复poll会返回同一批次，避免响应丢失后漏消息。', boundary: BOUNDARY }
+    const partial = batch.groups.some(g => ['error', 'backlog', 'order-unverified', 'identity-unavailable', 'catching-up', 'baseline-building'].includes(g.status) || g.contentComplete === false)
+    return { watchlistId: state.id, batchId: batch.id, createdAt: batch.createdAt, groups: batch.groups, messages: rows, delivery: { offset, returned: rows.length, total: batch.messages.length, nextOffset: offset + rows.length, complete: offset + rows.length >= batch.messages.length, acknowledged: false }, partial, contentIntegrity: summarizeContentIntegrity(batch.messages), instruction: '继续读取所有分页并完成用户要求的整理后，再调用 ack_watchlist_batch。重复poll会返回同一批次，避免响应丢失后漏消息。', boundary: BOUNDARY }
   }
   return {
     configure: params => locked(params.id, async () => {
@@ -77,22 +118,23 @@ function createWatchStore(options = {}) {
             if (!page.messages.length) { exhausted = true; finished = true; break }
             let consumed = 0, uniqueCount = 0
             for (const raw of page.messages.slice(0, count)) {
-              const m = { ...raw, sessionId }, timestamp = Number(m.timestamp || 0)
+              const m = { ...raw, sessionId, sourceOffset: offset + consumed }, timestamp = Number(m.timestamp || 0)
               if (!Number.isFinite(timestamp) || timestamp < 0 || (m.localId == null && m.serverId == null)) throw new Error('上游消息缺少稳定ID或有效时间戳')
               if (timestamp > lastTime) throw new Error('上游时间顺序不是倒序，未推进该群进度')
               lastTime = timestamp
-              const key = identityOf(m)
+              const keys = identityKeys(m), key = keys[0]
               consumed += 1; scanned += 1
-              if (pageSeen.has(key)) continue
-              pageSeen.add(key); uniqueCount += 1
-              if (!tailFound) { if (key === progress.tail) tailFound = true; continue }
+              if (keys.some(value => pageSeen.has(value))) continue
+              for (const value of keys) pageSeen.add(value)
+              uniqueCount += 1
+              if (!tailFound) { if (keys.includes(progress.tail)) tailFound = true; continue }
               if (!progress.head) progress.head = { anchor: key, timestamp }
               // Complete the whole checkpoint second; localId order within a second is not assumed.
               const stopTime = prior ? baselineTime : progress.includeInitial ? 0 : progress.head.timestamp
               if (timestamp < stopTime) { finished = true; break }
               if (timestamp === progress.head.timestamp) progress.headSeen.push(key)
               progress.tail = key; progress.offset = offset + consumed
-              if (!alreadySeen.has(key)) {
+              if (!keys.some(value => alreadySeen.has(value))) {
                 progress.seen.push(key); alreadySeen.add(key)
                 if (prior || progress.includeInitial) collected.push(m)
               }
@@ -104,12 +146,13 @@ function createWatchStore(options = {}) {
           if (!tailFound) throw new Error('续扫锚点未找到，可能有大量新增或索引变化；本群保持原进度，请提高扫描预算后重试')
           if (alreadySeen.size > 50000) throw new Error('单轮追赶超过50,000条，请缩小关注范围或显式重建基线')
           const selected = collected.filter(m => matches(m, { sender_ids: state.senderIds, keywords: state.keywords, match_mode: state.matchMode }))
-          batch.messages.push(...selected.map(m => ({ sourceRef: evidenceOf(m).sourceRef, evidenceId: identityOf(m).slice(0, 20), sessionId, localId: m.localId, serverId: m.serverId, timestamp: Number(m.timestamp), senderId: String(m.senderId || m.sender_id || m.sender || '').slice(0, 512), senderName: String(m.senderName || '').slice(0, 512), type: m.type, content: String(m.content || '').slice(0, 2000), contentTruncated: String(m.content || '').length > 2000, matchedKeywords: keywordHits(m, { keywords: state.keywords }) })))
+          const selectedIntegrity = summarizeContentIntegrity(selected)
+          batch.messages.push(...selected.map(m => deliveryMessage(m, sessionId, state.keywords)))
           if (finished) {
             batch.checkpoints[sessionId] = progress.head ? { ...progress.head, seen: [...new Set(progress.headSeen)] } : prior || { anchor: null, timestamp: 0, seen: [] }
             batch.progress[sessionId] = null
           } else batch.progress[sessionId] = progress
-          batch.groups.push({ sessionId, status: finished ? (prior ? 'checked' : 'baseline') : (prior ? 'catching-up' : 'baseline-building'), scanned, newMessages: collected.length, matchedMessages: selected.length, initialHistoryEmitted: !prior && progress.includeInitial, historyComplete: exhausted, continuationOffset: finished ? null : progress.offset, message: finished ? '' : '本轮已交付的分页确认后，将保存续扫位置；下次poll继续追赶。确认游标在覆盖旧边界后才提交。' })
+          batch.groups.push({ sessionId, status: finished ? (prior ? 'checked' : 'baseline') : (prior ? 'catching-up' : 'baseline-building'), scanned, newMessages: collected.length, matchedMessages: selected.length, contentComplete: selectedIntegrity.complete, contentIntegrity: selectedIntegrity, initialHistoryEmitted: !prior && progress.includeInitial, historyComplete: exhausted, continuationOffset: finished ? null : progress.offset, message: finished ? '' : '本轮已交付的分页确认后，将保存续扫位置；下次poll继续追赶。确认游标在覆盖旧边界后才提交。' })
         } catch (error) { batch.groups.push({ sessionId, status: 'error', error: error.message }) }
       }
       batch.messages.sort((a, b) => Number(a.timestamp) - Number(b.timestamp))

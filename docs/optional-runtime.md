@@ -4,7 +4,7 @@
 
 ## 按需安装
 
-建议使用 Python 3.11 的独立虚拟环境。以下命令会从 PyPI 下载第三方依赖，只有你明确需要相关能力时再执行。眼的基础安装脚本不会执行这些命令。
+建议使用 Python 3.11 的独立虚拟环境。以下命令会从 PyPI 下载第三方依赖，只有你明确需要相关能力时再执行。眼的基础安装脚本不会执行这些命令，也不会因为可选解析器缺失而下载依赖。若本机已经有合适的 Python 环境和模块，可先运行 `npm run optional:local`：它只探测 `ocr-runtime/.venv`、已配置的 `WXLENS_*_PYTHON`、Windows `py -3.11` 或 PATH 中的 Python，写入 `.local/optional-runtime.json` 供眼后续使用；不会运行 `pip`、联网、下载模型或改变系统 Python。探测不到的能力继续保持 `optional`，不会伪装成已安装。
 
 Windows：
 
@@ -20,7 +20,7 @@ python3.11 -m venv ocr-runtime/.venv
 ocr-runtime/.venv/bin/python -m pip install -r ocr-runtime/requirements-ocr.txt
 ```
 
-音视频需要额外安装 `requirements-media.txt`，并在系统 PATH 中提供 `ffmpeg` 与 `ffprobe`。旧 XLS 仅需要 xlrd；若只需该功能，可以在上述虚拟环境安装 `xlrd==2.0.2`。
+音视频需要额外安装 `requirements-media.txt`，并在系统 PATH 中提供 `ffmpeg` 与 `ffprobe`。旧 XLS 仅需要 xlrd；若只需该功能，可以在上述虚拟环境安装 `xlrd==2.0.2`。如果不允许联网安装，使用 `npm run optional:local` 只启用本机已存在的 xlrd、RapidOCR/PyMuPDF 或 faster-whisper；`npm run doctor` 会分别显示解析器是否可用。
 
 这些文件锁定原项目使用的直接依赖版本，不是跨平台完整的传递依赖锁。实际安装需要对应平台有兼容wheel。当前源码验收未下载大型模型、未完成全新 Python 环境的模型质量测试；遇到版本或平台不兼容时应保留安装错误，不能以路径存在当作功能验收。
 

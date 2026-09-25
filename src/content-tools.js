@@ -9,6 +9,7 @@ const iconv = require('iconv-lite')
 const chardet = require('chardet')
 const { withinRoots } = require('./path-safety')
 const { loadBoundedZip, validateArchive } = require('./bounded-zip')
+const { runtimePath, pythonModuleAvailable, runtimeStatus } = require('./optional-runtime')
 
 const DEFAULT_MAX_TEXT = 200000
 const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.jsonl', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml', '.html', '.htm', '.log', '.rtf', '.srt', '.vtt'])
@@ -101,19 +102,19 @@ function parserSupport(ext, filePath = '') {
   if (['text','docx','odt','epub','spreadsheet','pptx','odp','zip'].includes(kind)) return 'text'
   return 'unsupported'
 }
-function walkFiles(roots, options = {}) {
+function walkFilesDetailed(roots, options = {}) {
   const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 2000)
   const keyword = String(options.keyword || '').toLowerCase()
   const extensions = options.extensions?.length ? new Set(options.extensions.map(ext => ext.startsWith('.') ? ext.toLowerCase() : '.' + ext.toLowerCase())) : SUPPORTED_EXTENSIONS
   const minTimestamp = Number(options.start_time || 0) * 1000
   const maxTimestamp = Number(options.end_time || 0) * 1000
-  const results = []; const stack = [...roots].reverse(); let visited = 0
+  const results = []; const stack = [...roots].reverse(); let visited = 0; let matchedFiles = 0; let traversalLimitHit = false
   const maxVisited = Math.min(Math.max(Number(options.max_entries) || 20000, 1), 100000)
   while (stack.length && visited < maxVisited) {
     const current = stack.pop(); let entries = []
     try { entries = fs.readdirSync(current, { withFileTypes: true }) } catch { continue }
     for (const entry of entries) {
-      if (++visited > maxVisited) break
+      if (++visited > maxVisited) { traversalLimitHit = true; break }
       const full = path.join(current, entry.name)
       if (!isWithinAllowedRoots(full, roots)) continue
       if (entry.isDirectory()) { stack.push(full); continue }
@@ -122,11 +123,18 @@ function walkFiles(roots, options = {}) {
       if (!extensions.has(ext) || (keyword && !entry.name.toLowerCase().includes(keyword))) continue
       const stat = safeStat(full)
       if (!stat || (minTimestamp && stat.mtimeMs < minTimestamp) || (maxTimestamp && stat.mtimeMs > maxTimestamp)) continue
+      matchedFiles += 1
       results.push({ fileName: entry.name, extension: ext, kind: detectFileKind(full), sourcePath: path.resolve(full).replace(/\\/g, '/'), size: stat.size, modifiedAt: stat.mtime.toISOString(), parseSupport: parserSupport(ext, full) })
       if (results.length > limit * 2) { results.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)); results.length = limit }
     }
   }
-  return results.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, limit)
+  const files = results.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, limit)
+  const truncatedByTraversal = traversalLimitHit || stack.length > 0
+  const coverage = { visitedEntries: visited, maxVisitedEntries: maxVisited, matchedFiles, returnedFiles: files.length, limit, truncatedByTraversal, truncatedByLimit: matchedFiles > limit, complete: !truncatedByTraversal && matchedFiles <= limit }
+  return { files, coverage }
+}
+function walkFiles(roots, options = {}) {
+  return walkFilesDetailed(roots, options).files
 }
 function decodeText(buffer) {
   const encoding = chardet.detect(buffer) || 'UTF-8'
@@ -208,11 +216,12 @@ function extractDoc(filePath) {
   return { text: String(result.stdout || '').trim(), coverage: {}, parser: 'antiword' }
 }
 const OCR_ROOT = path.resolve(process.env.WXLENS_OCR_ROOT || path.join(__dirname, '..', 'ocr-runtime'))
-const OCR_PYTHON = process.env.WXLENS_OCR_PYTHON || path.join(OCR_ROOT, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']))
+const DEFAULT_PYTHON = path.join(OCR_ROOT, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']))
+const OCR_PYTHON = process.env.WXLENS_OCR_PYTHON || runtimePath('ocr', DEFAULT_PYTHON)
 const OCR_SCRIPT = process.env.WXLENS_OCR_SCRIPT || path.join(OCR_ROOT, 'ocr_runner.py')
-const XLS_PYTHON = process.env.WXLENS_XLS_PYTHON || OCR_PYTHON
+const XLS_PYTHON = process.env.WXLENS_XLS_PYTHON || runtimePath('xls', DEFAULT_PYTHON) || OCR_PYTHON
 const XLS_SCRIPT = process.env.WXLENS_XLS_SCRIPT || path.join(OCR_ROOT, 'xls_runner.py')
-function legacyXlsAvailable() { return fs.existsSync(process.env.WXLENS_XLS_PYTHON || XLS_PYTHON) && fs.existsSync(process.env.WXLENS_XLS_SCRIPT || XLS_SCRIPT) }
+function legacyXlsAvailable() { return fs.existsSync(process.env.WXLENS_XLS_PYTHON || XLS_PYTHON) && fs.existsSync(process.env.WXLENS_XLS_SCRIPT || XLS_SCRIPT) && pythonModuleAvailable(process.env.WXLENS_XLS_PYTHON || XLS_PYTHON, 'xlrd') }
 function extractLegacyXls(filePath) {
   const python = process.env.WXLENS_XLS_PYTHON || XLS_PYTHON
   const script = process.env.WXLENS_XLS_SCRIPT || XLS_SCRIPT
@@ -224,7 +233,8 @@ function extractLegacyXls(filePath) {
   return { text: String(payload.text || '').trim(), coverage: payload.coverage || {}, parser: payload.parser || 'xlrd-safe-legacy-xls', warnings: payload.warnings || [] }
 }
 function highAccuracyOcrAvailable() {
-  return fs.existsSync(process.env.WXLENS_OCR_PYTHON || OCR_PYTHON) && fs.existsSync(process.env.WXLENS_OCR_SCRIPT || OCR_SCRIPT)
+  const python = process.env.WXLENS_OCR_PYTHON || OCR_PYTHON
+  return fs.existsSync(python) && fs.existsSync(process.env.WXLENS_OCR_SCRIPT || OCR_SCRIPT) && pythonModuleAvailable(python, ['rapidocr', 'pymupdf'])
 }
 function extractImage(filePath) {
   const python = process.env.WXLENS_OCR_PYTHON || OCR_PYTHON
@@ -245,9 +255,12 @@ function extractImage(filePath) {
     parser: payload.parser || 'rapidocr-local-models', warnings: payload.warnings || [], metadata: payload.metadata,
   }
 }
-const MEDIA_PYTHON = process.env.WXLENS_MEDIA_PYTHON || OCR_PYTHON
+const MEDIA_PYTHON = process.env.WXLENS_MEDIA_PYTHON || runtimePath('media', OCR_PYTHON)
 const MEDIA_SCRIPT = process.env.WXLENS_MEDIA_SCRIPT || path.join(OCR_ROOT, 'media_runner.py')
-function mediaDeepReaderAvailable() { return fs.existsSync(process.env.WXLENS_MEDIA_PYTHON || MEDIA_PYTHON) && fs.existsSync(process.env.WXLENS_MEDIA_SCRIPT || MEDIA_SCRIPT) }
+function mediaDeepReaderAvailable() {
+  const python = process.env.WXLENS_MEDIA_PYTHON || MEDIA_PYTHON
+  return fs.existsSync(python) && fs.existsSync(process.env.WXLENS_MEDIA_SCRIPT || MEDIA_SCRIPT) && pythonModuleAvailable(python, 'faster_whisper')
+}
 function extractMedia(filePath) {
   if (!commandExists('ffprobe')) throw new Error('Media parser unavailable: ffprobe not found')
   if (mediaDeepReaderAvailable()) {
@@ -298,6 +311,13 @@ async function extractByKind(filePath, kind) {
   if (kind === 'zip') return extractZip(filePath)
   throw new Error(`Unsupported local file type: ${path.extname(filePath).toLowerCase() || '[no extension]'}`)
 }
+function textChunk(text, requestedOffset, requestedMax) {
+  let start = Math.min(Math.max(Number(requestedOffset) || 0, 0), text.length)
+  if (start > 0 && start < text.length && /[\uDC00-\uDFFF]/.test(text[start]) && /[\uD800-\uDBFF]/.test(text[start - 1])) start -= 1
+  let end = Math.min(start + Math.max(Number(requestedMax) || 1, 1), text.length)
+  if (end < text.length && end > start && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end -= 1
+  return { start, end, text: text.slice(start, end) }
+}
 async function extractLocalFile(filePath, roots, options = {}) {
   if (!isWithinAllowedRoots(filePath, roots)) throw new Error('Path is outside allowlisted local WeChat roots')
   const stat = safeStat(filePath)
@@ -308,25 +328,38 @@ async function extractLocalFile(filePath, roots, options = {}) {
   for await (const chunk of fs.createReadStream(filePath)) hasher.update(chunk)
   const hash = hasher.digest('hex')
   const maxChars = Math.min(Math.max(Number(options.max_chars) || DEFAULT_MAX_TEXT, 1), 1000000); const text = String(extracted.text || '')
+  const chunk = textChunk(text, options.offset_chars, maxChars)
   return { sourcePath: path.resolve(filePath).replace(/\\/g, '/'), fileName: path.basename(filePath), extension: path.extname(filePath).toLowerCase(), kind,
-    sha256: hash, size: stat.size, modifiedAt: stat.mtime.toISOString(), parser: extracted.parser || kind, text: text.slice(0, maxChars), truncated: text.length > maxChars,
-    originalChars: text.length, coverage: extracted.coverage || {}, metadata: extracted.metadata, warnings: [...(extracted.warnings || []), ...(text ? [] : ['No readable text extracted'])] }
+    sha256: hash, size: stat.size, modifiedAt: stat.mtime.toISOString(), parser: extracted.parser || kind, text: chunk.text, truncated: chunk.end < text.length, originalChars: text.length, returnedChars: chunk.text.length, offsetChars: chunk.start, nextOffset: chunk.end < text.length ? chunk.end : null, originalCodePoints: Array.from(text).length, returnedCodePoints: Array.from(chunk.text).length, coverage: extracted.coverage || {}, metadata: extracted.metadata, warnings: [...(extracted.warnings || []), ...(text ? [] : ['No readable text extracted'])] }
 }
 async function searchLocalFiles(keyword, roots, options = {}) {
   if (!keyword) throw new Error('keyword is required')
-  const candidates = walkFiles(roots, { ...options, limit: Math.min(Number(options.scan_limit) || 500, 2000) }).filter(item => ['text','ocr','metadata'].includes(item.parseSupport))
-  const results = []; const failures = []; let scanned = 0; const needle = keyword.toLowerCase()
+  const { keyword: _filenameKeyword, ...fileOptions } = options
+  const candidateLimit = Math.min(Number(options.scan_limit) || 500, 2000)
+  const listing = walkFilesDetailed(roots, { ...fileOptions, keyword: '', limit: candidateLimit })
+  const candidates = listing.files
+  const results = []; const failures = []; const truncatedFiles = []; let scanned = 0; const needle = keyword.toLowerCase()
+  const perFileBudget = Math.min(Math.max(Number(options.max_chars_per_file) || 1000000, 1), 1000000)
+  const resultLimit = Math.min(Number(options.limit) || 50, 200)
   for (const candidate of candidates) {
-    if (results.length >= Math.min(Number(options.limit) || 50, 200)) break
+    if (results.length >= resultLimit) break
     scanned += 1
+    if (!['text', 'ocr', 'metadata'].includes(candidate.parseSupport)) {
+      failures.push({ fileName: candidate.fileName, parseSupport: candidate.parseSupport, warning: '未搜索：对应正文解析器不可用或文件格式不支持。' })
+      continue
+    }
     try {
-      const extracted = await extractLocalFile(candidate.sourcePath, roots, { max_chars: Number(options.max_chars_per_file) || 500000 }); const index = extracted.text.toLowerCase().indexOf(needle)
+      const extracted = await extractLocalFile(candidate.sourcePath, roots, { max_chars: perFileBudget, offset_chars: 0 })
+      if (extracted.truncated) truncatedFiles.push({ fileName: extracted.fileName, originalChars: extracted.originalChars, scannedChars: extracted.offsetChars + extracted.returnedChars, nextOffset: extracted.nextOffset })
+      const index = extracted.text.toLowerCase().indexOf(needle)
       if (index < 0) continue
       const start = Math.max(0, index - 200)
-      results.push({ fileName: extracted.fileName, sourcePath: extracted.sourcePath, kind: extracted.kind, sha256: extracted.sha256, snippet: extracted.text.slice(start, index + keyword.length + 500), matchOffset: index })
+      results.push({ fileName: extracted.fileName, sourcePath: extracted.sourcePath, kind: extracted.kind, sha256: extracted.sha256, snippet: extracted.text.slice(start, index + keyword.length + 500), matchOffset: extracted.offsetChars + index, extractionTruncated: extracted.truncated, originalChars: extracted.originalChars })
     } catch (error) { failures.push({ fileName: candidate.fileName, warning: error.message }) }
   }
-  return { keyword, candidates: candidates.length, scanned, returned: results.length, results, failures, complete: scanned === candidates.length, boundary: '仅覆盖本次有界目录扫描及文本截断范围。' }
+  const resultLimitReached = results.length >= resultLimit && scanned < candidates.length
+  const complete = scanned === candidates.length && failures.length === 0 && truncatedFiles.length === 0 && listing.coverage.complete && !resultLimitReached
+  return { keyword, candidates: candidates.length, scanned, returned: results.length, results, failures, complete, partial: !complete, truncatedFiles, coverage: { files: listing.coverage, resultLimit, resultLimitReached }, boundary: '每个文件一次提取不超过100万字符，不再按20万字符分段，因此预算内的关键词不会被分块边界切开。解析器缺失或格式不支持的文件会列入failures并使结果partial；文件清单受scan_limit、目录遍历和limit约束，coverage标出未列出的文件；truncatedFiles列出已搜索但尚未扫描的尾部，用nextOffset交给extract_wechat_attachment_text继续读。' }
 }
 function parseMergedForwardSnippet(content) {
   const text = String(content || '').replace(/\u0008/g, '\n'); const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean); const title = lines.shift() || ''
@@ -334,9 +367,11 @@ function parseMergedForwardSnippet(content) {
   return { title, messages, rawText: text }
 }
 function getParserCapabilities() {
+  const runtime = runtimeStatus()
   return { formats: ['txt','md','csv','tsv','json','jsonl','yaml','toml','ini','xml','html','rtf','srt','vtt','pdf','doc','docx','xls','xlsx','xlsm','ods','pptx','odt','odp','epub','zip','image-ocr','audio-asr','video-asr-keyframes-ocr'],
     engines: { pdftotext: commandExists('pdftotext'), antiword: commandExists('antiword'), legacyXls: legacyXlsAvailable(), highAccuracyOcr: highAccuracyOcrAvailable(), ffprobe: commandExists('ffprobe'), mediaDeepReader: mediaDeepReaderAvailable() },
-    blockedFormats: legacyXlsAvailable() ? {} : { xls: 'Run install.cmd to install the isolated xlrd legacy XLS reader.' },
+    optionalRuntime: runtime,
+    blockedFormats: legacyXlsAvailable() ? {} : { xls: 'Run npm run optional:local to probe an existing local xlrd runtime; no network install is performed.' },
     boundaries: ['Legacy XLS is parsed read-only with xlrd; VBA/macros are never executed and formulas are returned only as cached values.', 'Archives parse text-like entries only with entry and byte limits.', 'Audio/video uses local faster-whisper timed ASR plus full-timeline sampled keyframe OCR when the model is installed; otherwise it degrades explicitly to metadata/visual evidence.', 'Image OCR uses an isolated local RapidOCR user-provided ONNX runtime; scanned PDF OCR falls back to the same engine when installed.'] }
 }
-module.exports = { SUPPORTED_EXTENSIONS, resolveAccountDir, getAllowedRoots, isWithinAllowedRoots, walkFiles, extractLocalFile, searchLocalFiles, parseMergedForwardSnippet, parserSupport, stripXml, detectFileKind, getParserCapabilities }
+module.exports = { SUPPORTED_EXTENSIONS, resolveAccountDir, getAllowedRoots, isWithinAllowedRoots, walkFiles, walkFilesDetailed, extractLocalFile, searchLocalFiles, parseMergedForwardSnippet, parserSupport, stripXml, detectFileKind, getParserCapabilities }
