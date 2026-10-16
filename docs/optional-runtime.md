@@ -6,6 +6,8 @@
 
 建议使用 Python 3.11 的独立虚拟环境。以下命令会从 PyPI 下载第三方依赖，只有你明确需要相关能力时再执行。眼的基础安装脚本不会执行这些命令，也不会因为可选解析器缺失而下载依赖。若本机已经有合适的 Python 环境和模块，可先运行 `npm run optional:local`：它只探测 `ocr-runtime/.venv`、已配置的 `YAN_*_PYTHON`、Windows `py -3.11` 或 PATH 中的 Python，写入 `.local/optional-runtime.json` 供眼后续使用；不会运行 `pip`、联网、下载模型或改变系统 Python。探测不到的能力继续保持 `optional`，不会伪装成已安装。
 
+探测会优先复用 `.local/optional-runtime.json` 中已经保存的解释器，并保存本机 `pdftotext`、`antiword`、`ffprobe` 的绝对路径，供PATH不同的GUI客户端使用。已保存的Python路径仍存在但本轮导入失败时保留路径，`detected`仍报告失败；不会用空结果擦除已有路径。模块可用性执行实际导入，原生依赖损坏不会仅因包文件存在就被标记为可用。进程内结果缓存最多30秒；环境变量变更仍需重启MCP。
+
 Windows：
 
 ```powershell

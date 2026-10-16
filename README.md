@@ -42,18 +42,24 @@ Windows解压整合包后可直接双击 `install.cmd`。脚本先安装基础No
 
 `setup.cmd` 或 `npm run setup` 会打开眼的界面，完成本机服务和索引准备。眼不自行索取、保存或输出敏感凭据；准备完成后，日常使用直接在 AI 软件里提问。
 
-默认服务地址 `http://127.0.0.1:5032`。查询发现服务未运行时，眼会尝试用 `--background` 启动已经发现的本机程序；MCP 握手本身不会等待它。后台启动只负责复用已经准备好的本机服务。
+默认服务地址 `http://127.0.0.1:5032`。查询发现服务未运行时，眼会尝试用 `--background` 启动已经发现的本机程序，并轮询健康接口及数据库查询就绪状态；新版明确提供 `queryReady` 时，必须为 `true` 才视为就绪；MCP 握手本身不会等待它。`/api/health` 在线不等于聊天数据库已连接。启动失败会保留具体错误，避免把原生组件故障误导为重新登录。后台启动只负责复用已经准备好的本机服务。
 
 眼会自动查找已经安装的程序。只有程序不在常见位置时，才把那个程序文件的真实路径传给 `--yan-exe`。服务端口和附件目录可按需配置：
 
 ```bash
 node src/cli.js config --base-url http://127.0.0.1:5032 --account-dir "D:/WeChat/xwechat_files/your-account"
 npm run doctor
+# Windows 已安装受信任的本机组件时，额外探测原生初始化（不读取密钥、不打开聊天数据库）
+node src/cli.js doctor --native
 ```
 
 账号目录是包含 `db_storage` 的账号文件夹，仅在读取附件时需要。多个账号须明确选择；配置保存在 `.local/config.json`。设 `YAN_AUTO_START=false` 可关闭自动启动。
 
 [首次接入详细步骤](docs/first-use.md) 区分安装、眼的本机服务准备和 MCP 配置，并说明常见连接问题。
+
+已有初始化时，用 `node src/cli.js open` 打开眼，不用反复运行首次设置。眼的 CLI、MCP 和仓库统一使用“眼 / yan”；第三方原始程序文件名、数据目录及署名保留，以免破坏现有初始化。眼的启动器会将同文件别名还原为原始入口。
+
+2026-10-09 本机恢复验证使用本人提供的桌面组件 4.7.2：原生初始化、HTTP、查询就绪及少量会话/消息读取通过，旧密钥由原程序迁移，未重新取钥。4.7.2 未纳入公开整合发行。其组件认证独立于微信数据库密钥，内置初始认证到 **2027-01-01 00:00（UTC+8）**；密钥可复用不等于组件永久免维护。安装器与第三方授权边界见 [来源说明](THIRD-PARTY-NOTICES.md)。
 
 ### 3. 复制 MCP 配置
 
@@ -79,7 +85,7 @@ npm run config:mcp
 - **Codex**：运行 `node src/cli.js mcp-config --client codex`，将生成的 TOML 合并到 Codex 配置中。
 - **其他客户端**：只需支持本地 stdio MCP。支持 tools 即可使用全部核心功能；resources/prompts 是辅助入口。
 
-接入后，让 AI 调用 `yan_diagnose`，再调用 `list_sessions`。即使本机服务暂时离线，眼也能完成 MCP 握手并提供诊断。移动眼的目录后，需要重新生成配置。
+接入后，让 AI 调用 `yan_diagnose`，再调用 `list_sessions`。即使本机服务暂时离线，眼也能完成 MCP 握手并提供诊断。诊断的 `readiness.state` 区分待自动启动、离线、服务错误、数据库未就绪与查询就绪；`awaiting_auto_start` 表示可以尝试小量查询触发启动，不代表读取已通过。`queryVerified` 在诊断中始终为 `false`，实际读取需以查询结果验收。移动眼的目录后，需要重新生成配置。
 
 ## 功能与工具
 
@@ -131,7 +137,7 @@ CLI 将结果保存在 `.local/receipts/`，不自动发微信、邮件或外部
 
 公众号文章与图片也可通过 MCP 读取：`search_wechat_articles` 使用公开微信索引发现候选；`search_wechat_articles_tencent` 是可选的腾讯云 WSA SearchPro，限定公众号域名和最近 N 天，需用户自行开通服务并在客户端安全配置凭据。两种搜索都只是候选发现，不承诺完整公众号历史。`fetch_wechat_article` 读取公开文章，`import_wechat_article` 接收本人或 AI 浏览器正常打开后的 HTML 快照；`read_article_image` 返回原生 MCP `image` 内容块，`download_article_images` 保存带 SHA-256 清单的配图。聊天分享链接可用 `list_shared_articles` 提取；`read_wechat_image` 只读取调用方明确选定的标准本地图片，不解密 `.dat`。
 
-[可选运行时说明](docs/optional-runtime.md) 列出 Python、模型、ffmpeg、许可及已验证边界。若本机已有可选 Python 模块，可运行 `npm run optional:local` 只做本地探测和启用，不运行 pip、不联网下载；`doctor` 会逐项显示 xlrd、OCR 和媒体解析状态。缺少模型会明确提示，不在读取时自动下载模型。压缩包在解析前检查条目数和实际展开字节。
+[可选运行时说明](docs/optional-runtime.md) 列出 Python、模型、ffmpeg、许可及已验证边界。若本机已有可选 Python 模块，可运行 `npm run optional:local` 只做本地探测和启用，不运行 pip、不联网下载；同时保存已经找到的 `pdftotext`、`antiword`、`ffprobe` 绝对路径，使 GUI 客户端不依赖终端的 PATH。程序被移动或删除时会重新检查 PATH，必要时重新运行探测。`doctor` 会逐项显示 xlrd、OCR 和媒体解析状态。缺少模型会明确提示，不在读取时自动下载模型。压缩包在解析前检查条目数和实际展开字节。
 
 ## 覆盖与隐私
 
@@ -147,6 +153,20 @@ CLI 将结果保存在 `.local/receipts/`，不自动发微信、邮件或外部
 - 眼源码、依赖安装和可选模型各自有许可。本机安装器、微信客户端、模型、数据库均不随源码发行。
 
 更多信息见 [安全与数据边界](SECURITY.md) 和 [第三方说明](THIRD-PARTY-NOTICES.md)。
+
+## 更新与复验
+
+源码更新时保留 `.local/`、`output/`、用户配置和已经准备好的第三方程序。更新后重新加载MCP；诊断返回 `runtime.version` 和 `runtime.startedAt`，可以识别客户端是否仍运行旧进程。Git更新不会替你升级第三方桌面组件或续期其认证。
+
+```bash
+npm ci --ignore-scripts
+npm run optional:local
+npm run verify:live
+# 明确进行小量真实查询验收，输出只有计数与诊断元数据
+npm run verify:live -- --query --messages
+```
+
+验收默认只做握手与诊断；`--query` 会读取至多2个会话并可触发既有后台启动，`--messages` 再读取首个会话1条消息。没有样本会明确失败，不会自动扩大扫描范围。该命令创建新MCP进程，不能替代已有AI客户端的重载。
 
 ## 开发与验证
 

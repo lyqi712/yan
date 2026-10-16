@@ -5,15 +5,14 @@
 | 依赖 | 锁定版本 | 许可 | 来源 |
 | --- | --- | --- | --- |
 | @hono/node-server | 1.19.17 | MIT | https://github.com/honojs/node-server.git |
-| @modelcontextprotocol/sdk | 1.29.0 | MIT | git+https://github.com/modelcontextprotocol/typescript-sdk.git |
+| @modelcontextprotocol/sdk | 1.32.1 | MIT | git+https://github.com/modelcontextprotocol/typescript-sdk.git |
 | @xmldom/xmldom | 0.8.15 | MIT | git://github.com/xmldom/xmldom.git |
 | accepts | 2.0.0 | MIT | jshttp/accepts |
 | acorn | 8.15.0 | MIT | git+https://github.com/acornjs/acorn.git |
 | ajv | 8.20.0 | MIT | ajv-validator/ajv |
 | ajv-formats | 3.0.1 | MIT | git+https://github.com/ajv-validator/ajv-formats.git |
-| argparse | 1.0.10 | MIT | nodeca/argparse |
+| argparse | 2.0.1 | Python-2.0 | nodeca/argparse |
 | base64-js | 1.5.1 | MIT | git://github.com/beatgammit/base64-js.git |
-| bluebird | 3.4.7 | MIT | git://github.com/petkaantonov/bluebird.git |
 | body-parser | 2.3.0 | MIT | expressjs/body-parser |
 | boolbase | 1.0.0 | ISC | https://github.com/fb55/boolbase |
 | bytes | 3.1.2 | MIT | visionmedia/bytes.js |
@@ -58,7 +57,7 @@
 | express | 5.2.1 | MIT | expressjs/express |
 | express-rate-limit | 8.5.2 | MIT | git+https://github.com/express-rate-limit/express-rate-limit.git |
 | fast-deep-equal | 3.1.3 | MIT | git+https://github.com/epoberezkin/fast-deep-equal.git |
-| fast-uri | 3.1.7 | BSD-3-Clause | git+https://github.com/fastify/fast-uri.git |
+| fast-uri | 3.1.8 | BSD-3-Clause | git+https://github.com/fastify/fast-uri.git |
 | finalhandler | 2.1.1 | MIT | pillarjs/finalhandler |
 | forwarded | 0.2.0 | MIT | jshttp/forwarded |
 | fresh | 2.0.0 | MIT | jshttp/fresh |
@@ -76,7 +75,7 @@
 | iconv-lite | 0.6.3 | MIT | git://github.com/ashtuchkin/iconv-lite.git |
 | immediate | 3.0.6 | MIT | git://github.com/calvinmetcalf/immediate.git |
 | inherits | 2.0.4 | ISC | git://github.com/isaacs/inherits |
-| ip-address | 10.7.0 | MIT | https://github.com/beaugunderson/ip-address.git |
+| ip-address | 10.7.4 | MIT | https://github.com/beaugunderson/ip-address.git |
 | ipaddr.js | 1.9.1 | MIT | git://github.com/whitequark/ipaddr.js |
 | is-promise | 4.0.0 | MIT | https://github.com/then/is-promise.git |
 | isarray | 1.0.0 | MIT | git://github.com/juliangruber/isarray.git |
@@ -87,7 +86,7 @@
 | jszip | 3.10.1 | (MIT OR GPL-3.0-or-later) | https://github.com/Stuk/jszip.git |
 | lie | 3.3.0 | MIT | https://github.com/calvinmetcalf/lie.git |
 | lop | 0.4.2 | BSD-2-Clause | https://github.com/mwilliamson/lop.git |
-| mammoth | 1.12.0 | BSD-2-Clause | https://github.com/mwilliamson/mammoth.js.git |
+| mammoth | 1.13.0 | BSD-2-Clause | https://github.com/mwilliamson/mammoth.js.git |
 | math-intrinsics | 1.1.0 | MIT | git+https://github.com/es-shims/math-intrinsics.git |
 | media-typer | 1.1.0 | MIT | jshttp/media-typer |
 | merge-descriptors | 2.0.0 | MIT | sindresorhus/merge-descriptors |
@@ -106,13 +105,12 @@
 | parse5-htmlparser2-tree-adapter | 7.1.0 | MIT | git://github.com/inikulin/parse5.git |
 | parse5-parser-stream | 7.1.2 | MIT | git://github.com/inikulin/parse5.git |
 | parseurl | 1.3.3 | MIT | pillarjs/parseurl |
-| path-is-absolute | 1.0.1 | MIT | sindresorhus/path-is-absolute |
 | path-key | 3.1.1 | MIT | sindresorhus/path-key |
 | path-to-regexp | 8.4.2 | MIT | https://github.com/pillarjs/path-to-regexp.git |
 | pend | 1.2.0 | MIT | git://github.com/andrewrk/node-pend.git |
 | pkce-challenge | 5.0.1 | MIT | git+https://github.com/crouchcd/pkce-challenge.git |
 | process-nextick-args | 2.0.1 | MIT | https://github.com/calvinmetcalf/process-nextick-args.git |
-| proxy-addr | 2.0.7 | MIT | jshttp/proxy-addr |
+| proxy-addr | 2.0.8 | MIT | jshttp/proxy-addr |
 | qs | 6.16.0 | BSD-3-Clause | https://github.com/ljharb/qs.git |
 | range-parser | 1.3.0 | MIT | jshttp/range-parser |
 | raw-body | 3.0.2 | MIT | stream-utils/raw-body |
@@ -131,7 +129,6 @@
 | side-channel-list | 1.0.1 | MIT | git+https://github.com/ljharb/side-channel-list.git |
 | side-channel-map | 1.0.1 | MIT | git+https://github.com/ljharb/side-channel-map.git |
 | side-channel-weakmap | 1.0.2 | MIT | git+https://github.com/ljharb/side-channel-weakmap.git |
-| sprintf-js | 1.0.3 | BSD-3-Clause | https://github.com/alexei/sprintf.js.git |
 | statuses | 2.0.2 | MIT | jshttp/statuses |
 | string_decoder | 1.1.1 | MIT | git://github.com/nodejs/string_decoder.git |
 | toidentifier | 1.0.1 | MIT | component/toidentifier |

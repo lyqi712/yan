@@ -48,7 +48,7 @@ test('别名启动文件优先回到原程序，独立的yan.exe不被误替换'
 })
 test('MCP并发首次查询只启动一次眼，之后复用现有服务', async () => {
   let ready = false, starts = 0
-  const client = createApiClient({ readConfig: () => ({ autoStart: true }), discover: () => 'fixture/WxLens.exe', launch: async (_exe, background) => { assert.equal(background, true); starts++; await new Promise(r => setTimeout(r, 5)); ready = true }, request: async (api, params) => { if (!ready) throw unreachable(); return { api, params } } })
+  const client = createApiClient({ readConfig: () => ({ autoStart: true }), discover: () => 'fixture/WxLens.exe', launch: async (_exe, background) => { assert.equal(background, true); starts++; await new Promise(r => setTimeout(r, 5)); ready = true }, request: async (api, params) => { if (!ready) throw unreachable(); return api === '/api/status' ? { connected: true } : { api, params } } })
   const results = await Promise.all([client('/api/sessions', { kind: 'group' }), client('/api/messages', { session_id: 'g' })])
   assert.equal(starts, 1); assert.equal(results[0].params.kind, 'group'); assert.equal(results[1].params.session_id, 'g')
   await client('/api/sessions'); assert.equal(starts, 1)
@@ -62,7 +62,7 @@ test('关闭自动启动或上游业务错误时不启动程序，失败提供�
   await assert.rejects(createApiClient({ readConfig: () => ({}), discover: () => '', request: async () => { throw unreachable() } })('/api/sessions'), /setup.cmd/)
   const timed = createApiClient({ ...common, startupTimeoutMs: 25, readConfig: () => ({}), request: async () => { throw unreachable() } })
   await assert.rejects(timed('/api/sessions'), /初始化/)
-  await assert.rejects(timed('/api/sessions'), /首次使用/); assert.equal(starts, 1)
+  await assert.rejects(timed('/api/sessions'), error => error.code === 'YAN_STARTUP_NOT_READY' && /doctor --native/.test(error.message)); assert.equal(starts, 1)
 })
 test('启动器不拼接shell命令、不继承Electron Node开关；自定义程序发现可用', async t => {
   let received

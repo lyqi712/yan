@@ -1,0 +1,18 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { resolveLocalTool } = require('../optional-runtime')
+
+test('已探测的解析器绝对路径在客户端PATH缺失时仍可使用', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yan-tool-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const executable = path.join(dir, process.platform === 'win32' ? 'pdftotext.exe' : 'pdftotext')
+  fs.writeFileSync(executable, '')
+  assert.equal(resolveLocalTool('pdftotext', { tools: { pdftotext: executable } }, () => ''), executable)
+  fs.unlinkSync(executable)
+  assert.equal(resolveLocalTool('pdftotext', { tools: { pdftotext: executable } }, () => ''), '')
+  assert.equal(resolveLocalTool('unapproved', { tools: { unapproved: process.execPath } }, () => ''), '')
+  assert.equal(resolveLocalTool('pdftotext', { tools: { pdftotext: 'relative.exe' } }, () => ''), '')
+})

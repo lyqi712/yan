@@ -9,7 +9,7 @@ const iconv = require('iconv-lite')
 const chardet = require('chardet')
 const { withinRoots } = require('./path-safety')
 const { loadBoundedZip, validateArchive } = require('./bounded-zip')
-const { runtimePath, pythonModuleAvailable, runtimeStatus } = require('./optional-runtime')
+const { runtimePath, pythonModuleAvailable, runtimeStatus, resolveLocalTool } = require('./optional-runtime')
 const { preferEnv } = require('./config')
 function fromEnv(name) { return preferEnv(process.env, name) }
 
@@ -63,13 +63,8 @@ function getAllowedRoots(accountDir) {
 function isWithinAllowedRoots(candidate, roots) {
   return withinRoots(candidate, roots)
 }
-const commandCache = new Map()
 function commandExists(command) {
-  if (commandCache.has(command)) return commandCache.get(command)
-  const probe = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [command], { encoding: 'utf8', windowsHide: true })
-  const found = probe.status === 0
-  commandCache.set(command, found)
-  return found
+  return Boolean(resolveLocalTool(command))
 }
 function sniffMagic(buffer) {
   if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image'
@@ -201,7 +196,7 @@ async function extractXmlPackage(filePath, prefixes, parserName) {
 function extractPdf(filePath) {
   if (highAccuracyOcrAvailable()) return extractImage(filePath)
   if (commandExists('pdftotext')) {
-    const result = spawnSync('pdftotext', ['-layout', filePath, '-'], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, windowsHide: true, timeout: 60000 })
+    const result = spawnSync(resolveLocalTool('pdftotext'), ['-layout', filePath, '-'], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, windowsHide: true, timeout: 60000 })
     if (result.status === 0) {
       const text = String(result.stdout || '').replace(/\r/g, '').trim()
       if (text) return { text, coverage: { pagesParsed: Math.max(1, String(result.stdout || '').split('\f').length), ocrUsed: false }, parser: 'pdftotext', warnings: ['仅读取文本层；混合PDF中的扫描页可能未覆盖。'] }
@@ -213,7 +208,7 @@ function extractPdf(filePath) {
 }
 function extractDoc(filePath) {
   if (!commandExists('antiword')) throw new Error('DOC parser unavailable: antiword not found')
-  const result = spawnSync('antiword', [filePath], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, windowsHide: true, timeout: 60000 })
+  const result = spawnSync(resolveLocalTool('antiword'), [filePath], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, windowsHide: true, timeout: 60000 })
   if (result.status !== 0) throw new Error(`antiword failed: ${String(result.stderr || '').trim()}`)
   return { text: String(result.stdout || '').trim(), coverage: {}, parser: 'antiword' }
 }
@@ -273,7 +268,7 @@ function extractMedia(filePath) {
     let payload; try { payload = JSON.parse(String(result.stdout || '').trim()) } catch { throw new Error('Media deep reader returned invalid JSON') }
     return { text: String(payload.text || '').trim(), coverage: payload.coverage || {}, parser: payload.parser || 'local-video-deep-reader', warnings: payload.warnings || [], metadata: payload.metadata || {} }
   }
-  const result = spawnSync('ffprobe', ['-v','error','-show_entries','format=filename,format_name,duration,size,bit_rate:stream=index,codec_name,codec_type,width,height,sample_rate,channels','-of','json',filePath], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, windowsHide: true, timeout: 60000 })
+  const result = spawnSync(resolveLocalTool('ffprobe'), ['-v','error','-show_entries','format=filename,format_name,duration,size,bit_rate:stream=index,codec_name,codec_type,width,height,sample_rate,channels','-of','json',filePath], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, windowsHide: true, timeout: 60000 })
   if (result.status !== 0) throw new Error(`ffprobe failed: ${String(result.stderr || '').trim()}`)
   const metadata = JSON.parse(result.stdout || '{}')
   return { text: JSON.stringify(metadata, null, 2), coverage: { streams: metadata.streams?.length || 0, asrSegments: 0, keyframes: 0 }, parser: 'ffprobe-metadata-only', metadata, warnings: ['Local ASR/keyframe reader is not installed; metadata only.'] }

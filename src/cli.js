@@ -7,12 +7,13 @@ function option(args, key, fallback) { const i = args.indexOf('--' + key); if (i
 async function main() {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('眼需要 Node.js 22 或更高版本，请先升级 Node.js。')
   const args = process.argv.slice(2), command = args[0] || 'help'
-  if (['help', '--help', '-h'].includes(command)) { console.log(`眼 · MCP 微信信息助手\n\nnode src/cli.js setup                眼的首次安装与初始化引导\nnode src/cli.js mcp                  MCP stdio 服务\nnode src/cli.js doctor               连接与可选能力诊断\nnode src/cli.js optional-local      只探测本机已有可选解析器，不联网安装\nnode src/cli.js config --base-url http://127.0.0.1:5032 [--account-dir 路径] [--yan-exe 程序路径]\nnode src/cli.js mcp-config [--client json|codex|proma]\nnode src/cli.js watch 列表ID [--interval 60] [--runs 1]\n\nwatch 默认运行一轮，--runs 0 明确持续运行；每轮结果保存到本机.local/receipts后确认批次。\n完整使用方式见 README.md 和 docs/monitoring.md。`); return }
+  if (['help', '--help', '-h'].includes(command)) { console.log(`眼 · MCP 微信信息助手\n\nnode src/cli.js setup                眼的首次安装与初始化引导\nnode src/cli.js open                 打开已配置的眼；不重新初始化\nnode src/cli.js mcp                  MCP stdio 服务\nnode src/cli.js doctor [--native]    连接诊断；--native另检查现有原生组件\nnode src/cli.js optional-local      只探测本机已有可选解析器，不联网安装\nnode src/cli.js config --base-url http://127.0.0.1:5032 [--account-dir 路径] [--yan-exe 程序路径]\nnode src/cli.js mcp-config [--client json|codex|proma]\nnode src/cli.js watch 列表ID [--interval 60] [--runs 1]\n\nwatch 默认运行一轮，--runs 0 明确持续运行；每轮结果保存到本机.local/receipts后确认批次。\n完整使用方式见 README.md 和 docs/monitoring.md。`); return }
   if (command === 'mcp-config') { const name = option(args, 'client', 'json'); const configs = renderMcpConfigs(); if (!configs[name]) throw new Error('client 只能是 json、codex、proma'); console.log(configs[name]); return }
   if (command === 'config') { const current = readConfig(); const saved = saveConfig({ ...current, baseUrl: option(args, 'base-url', current.baseUrl), accountDir: option(args, 'account-dir', current.accountDir), yanExe: option(args, 'yan-exe', option(args, 'wxlens-exe', current.yanExe)) }); console.log('配置已保存到 .local/config.json。环境变量 YAN_* 如已设置，会优先于本地配置。'); return }
   if (command === 'optional-local') { console.log(JSON.stringify(require('./optional-runtime').localOnlyInstall(), null, 2)); return }
   if (command === 'mcp') { await require('./server').createServer({ connect: true }); return }
-  if (command === 'doctor') { const report = await require('./doctor').diagnose(); console.log(JSON.stringify(report, null, 2)); process.exitCode = report.ok ? 0 : 1; return }
+  if (command === 'doctor') { const report = await require('./doctor').diagnose({ native: args.includes('--native') }); console.log(JSON.stringify(report, null, 2)); process.exitCode = report.ok ? 0 : 1; return }
+  if (command === 'open') { await require('./yan-runtime').openDesktop(); console.log('已请求打开眼，保留现有初始化。'); return }
   if (command === 'setup') { await require('./setup').setup(); return }
   if (command === 'watch') {
     const id = args[1]; if (!id || id.startsWith('--')) throw new Error('请提供已创建的关注列表ID')

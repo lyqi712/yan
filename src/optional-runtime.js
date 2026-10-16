@@ -10,11 +10,9 @@ const MODULES = { xls: ['xlrd'], ocr: ['rapidocr', 'pymupdf'], media: ['faster_w
 const { preferEnv } = require('./config')
 const ENV_SUFFIX = { xls: 'XLS_PYTHON', ocr: 'OCR_PYTHON', media: 'MEDIA_PYTHON' }
 function configuredPython(kind) { return preferEnv(process.env, ENV_SUFFIX[kind]) }
-const probeCache = new Map()
-
-function readManifest() {
+function readManifest(file = MANIFEST) {
   try {
-    const value = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'))
     return value && typeof value === 'object' ? value : {}
   } catch { return {} }
 }
@@ -22,28 +20,40 @@ function runtimePath(kind, fallback = DEFAULT_VENV) {
   const env = configuredPython(kind)
   return env || readManifest().interpreters?.[kind] || fallback
 }
-function pythonModuleAvailable(python, modules) {
-  const list = Array.isArray(modules) ? modules : [modules]
-  const key = `${python}\0${list.join(',')}`
-  if (probeCache.has(key)) return probeCache.get(key)
-  if (!python || !fs.existsSync(python)) { probeCache.set(key, false); return false }
-  const code = "import importlib.util, sys; missing = [name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]; raise SystemExit(1 if missing else 0)"
-  const result = spawnSync(python, ['-c', code, ...list], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
-  const available = result.status === 0
-  probeCache.set(key, available)
-  return available
+function createModuleProbe(options = {}) {
+  const cache = new Map()
+  const now = options.now || Date.now
+  const exists = options.exists || fs.existsSync
+  const run = options.spawn || spawnSync
+  const probe = (python, modules) => {
+    const list = Array.isArray(modules) ? modules : [modules]
+    const key = `${python}\0${list.join(',')}`
+    if (!python || !exists(python)) { cache.delete(key); return false }
+    const cached = cache.get(key)
+    if (cached && cached.expiresAt > now()) return cached.available
+    const code = "import importlib, sys; [importlib.import_module(name) for name in sys.argv[1:]]"
+    const result = run(python, ['-c', code, ...list], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+    const available = result.status === 0
+    cache.set(key, { available, expiresAt: now() + (options.ttlMs ?? 30000) })
+    return available
+  }
+  probe.clear = () => cache.clear()
+  return probe
 }
+const pythonModuleAvailable = createModuleProbe()
 function pythonProbe(spec, modules = []) {
-  const code = "import importlib.util, sys; missing = [name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]; print(sys.executable); raise SystemExit(1 if missing else 0)"
+  const code = "import importlib, sys; [importlib.import_module(name) for name in sys.argv[1:]]; print(sys.executable)"
   const result = spawnSync(spec.command, [...(spec.args || []), '-c', code, ...modules], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
   const executable = String(result.stdout || '').trim().split(/\r?\n/).at(-1) || ''
   return { ok: result.status === 0, executable, error: String(result.stderr || '').trim().slice(0, 300) }
 }
-function candidateSpecs() {
+function candidateSpecs(manifest = readManifest(), env = process.env) {
   const specs = []
   for (const kind of ['xls', 'ocr', 'media']) {
-    const configured = configuredPython(kind)
+    const configured = preferEnv(env, ENV_SUFFIX[kind])
     if (configured) specs.push({ command: configured, args: [] })
+    const saved = manifest.interpreters?.[kind]
+    if (typeof saved === 'string' && path.isAbsolute(saved)) specs.push({ command: saved, args: [] })
   }
   specs.push({ command: DEFAULT_VENV, args: [] })
   if (process.platform === 'win32') specs.push({ command: 'py', args: ['-3.11'] })
@@ -57,28 +67,48 @@ function candidateSpecs() {
     return true
   })
 }
-function findLocalInterpreter(modules) {
-  for (const spec of candidateSpecs()) {
+function findLocalInterpreter(modules, candidates = candidateSpecs()) {
+  for (const spec of candidates) {
     const result = pythonProbe(spec, modules)
     if (result.ok && result.executable) return result.executable
   }
   return ''
 }
-function localOnlyInstall() {
+const LOCAL_TOOLS = ['pdftotext', 'antiword', 'ffprobe']
+function findToolOnPath(command) {
+  const probe = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [command], { encoding: 'utf8', windowsHide: true, timeout: 3000 })
+  if (probe.status !== 0) return ''
+  return String(probe.stdout || '').split(/\r?\n/).map(value => value.trim()).find(value => path.isAbsolute(value) && isToolFile(value)) || ''
+}
+function isToolFile(value) {
+  try { return fs.statSync(value).isFile() } catch { return false }
+}
+function resolveLocalTool(command, manifest = readManifest(), find = findToolOnPath) {
+  if (!LOCAL_TOOLS.includes(command)) return ''
+  const saved = manifest.tools?.[command]
+  if (typeof saved === 'string' && path.isAbsolute(saved) && isToolFile(saved)) return saved
+  return find(command)
+}
+function localOnlyInstall(options = {}) {
+  const manifestPath = options.manifestPath || MANIFEST
+  const previous = readManifest(manifestPath)
   const interpreters = {}
   const detected = {}
   for (const [kind, modules] of Object.entries(MODULES)) {
-    const executable = findLocalInterpreter(modules)
-    interpreters[kind] = executable || null
+    const executable = (options.findInterpreter || findLocalInterpreter)(modules, candidateSpecs(previous))
+    const saved = previous.interpreters?.[kind]
+    const retained = typeof saved === 'string' && path.isAbsolute(saved) && isToolFile(saved) ? saved : null
+    interpreters[kind] = executable || retained
     detected[kind] = Boolean(executable)
   }
-  fs.mkdirSync(path.dirname(MANIFEST), { recursive: true, mode: 0o700 })
-  const manifest = { version: 1, mode: 'local-only', generatedAt: new Date().toISOString(), interpreters, detected, networkAccess: false }
-  const temporary = `${MANIFEST}.${process.pid}.tmp`
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o700 })
+  const tools = Object.fromEntries(LOCAL_TOOLS.map(command => [command, (options.findTool || resolveLocalTool)(command, previous) || null]))
+  const manifest = { version: 1, mode: 'local-only', generatedAt: new Date().toISOString(), interpreters, tools, detected, networkAccess: false }
+  const temporary = `${manifestPath}.${process.pid}.tmp`
   fs.writeFileSync(temporary, JSON.stringify(manifest, null, 2), { encoding: 'utf8', mode: 0o600 })
-  fs.renameSync(temporary, MANIFEST)
-  probeCache.clear()
-  return { manifestPath: MANIFEST, ...manifest, note: '仅探测并启用本机已有解释器和模块；未运行pip、未下载模型或其他网络资源。' }
+  fs.renameSync(temporary, manifestPath)
+  pythonModuleAvailable.clear()
+  return { manifestPath, ...manifest, note: '仅探测并启用本机已有解释器和模块；未运行pip、未下载模型或其他网络资源。探测暂时失败时保留仍存在的已配置解释器，detected仍如实报告本轮结果。' }
 }
 function runtimeStatus() {
   const manifest = readManifest()
@@ -93,4 +123,4 @@ function runtimeStatus() {
   }
 }
 
-module.exports = { MANIFEST, MODULES, runtimePath, pythonModuleAvailable, localOnlyInstall, runtimeStatus }
+module.exports = { MANIFEST, MODULES, runtimePath, pythonModuleAvailable, localOnlyInstall, runtimeStatus, resolveLocalTool, candidateSpecs, createModuleProbe }
