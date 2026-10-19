@@ -74,7 +74,7 @@ test('启动器不拼接shell命令、不继承Electron Node开关；自定义�
   const file = path.join(root, 'WxLens.exe'); fs.writeFileSync(file, 'synthetic, never executed')
   assert.equal(discoverYan({ wxlensExe: file }), file)
   assert.equal(discoverYan({ yanExe: file }), file)
-  await assert.rejects(verifyInstaller(file), /大小不匹配/)
+  await assert.rejects(verifyInstaller(file), { code: 'YAN_INSTALLER_WITHDRAWN' })
 })
 test('实际MCP在上游离线时仍握手和发现工具，查询给出可读失败', { timeout: 15000 }, async t => {
   const server = http.createServer(); await new Promise(r => server.listen(0, '127.0.0.1', r)); const port = server.address().port; await new Promise(r => server.close(r))

@@ -35,10 +35,10 @@ async function verify(file, expected) {
     zip.readEntry()
   })
 }
-async function integrated() {
-  const installer = installerFile(ROOT)
+async function integrated(root = ROOT) {
+  const installer = installerFile(root)
   await verifyInstaller(installer)
-  const source = await build(ROOT), zip = await JSZip.loadAsync(fs.readFileSync(source.file))
+  const source = await build(root), zip = await JSZip.loadAsync(fs.readFileSync(source.file))
   const lines = (await zip.file('yan/checksums.sha256').async('text')).trim().split('\n')
   const relative = 'vendor/' + INSTALLER.name
   lines.push(`${INSTALLER.sha256}  ${relative}`)

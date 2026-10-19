@@ -60,7 +60,7 @@ PDF 优先逐页读取原生文本；没有文本的页面再做 OCR。混合 PD
 | `YAN_ASR_MODEL` / `YAN_ASR_MODEL_DIR` | 语音模型名称或本地位置 |
 | `YAN_ASR_DEVICE` / `YAN_ASR_COMPUTE_TYPE` | CPU/GPU及计算精度，由使用者按环境配置 |
 
-更改运行时环境变量后需重启MCP进程。`YAN_DESKTOP_EXE`指定眼的启动程序；查询时可自动后台启动，设`YAN_AUTO_START=false`关闭。安装器仅由setup交互确认运行，不依赖Electron的Node模式。原来的 `WXLENS_*` 变量在没有对应 `YAN_*` 时仍然生效。
+更改运行时环境变量后需重启MCP进程。`YAN_DESKTOP_EXE`指定眼的启动程序；查询时可自动后台启动，设`YAN_AUTO_START=false`关闭。当前旧固定安装器已停止准入；未来获准组件的安装仍须本机交互确认，见[旧组件故障与迁移](component-recovery.md)。基础安装不依赖Electron的Node模式。原来的 `WXLENS_*` 变量在没有对应 `YAN_*` 时仍然生效。
 
 ## 许可与资源
 

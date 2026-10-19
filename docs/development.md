@@ -41,7 +41,9 @@ Python语法通过不代表可选依赖、模型或真实OCR/ASR通过。真实W
 
 打包后重读ZIP，逐文件验证SHA-256，同时检查CRC32。产物为`dist/yan-v<package.json版本>-source.zip`及独立`.sha256`。不要把测试生成的聊天证据ZIP当作源码包发布。
 
-具备眼的安装器时，可运行 `npm run package:integrated` 生成Windows整合ZIP。该命令先核验固定安装器哈希，再放进 `vendor/yan-4.3.0-Setup.exe`，最后逐文件重读验证SHA-256；不会执行安装器。源码版与整合版区别见第三方说明。
+旧固定 WxLens 4.3.0 安装器自2026-10-19起已停止安装和整合打包准入。`npm run package:integrated` 目前应返回 `YAN_INSTALLER_WITHDRAWN` 并以非零状态退出，且不得生成源码或整合产物；这是发行门禁通过的预期行为。不要通过改名、强制参数或只重算哈希重新分发同一文件。
+
+重新开放整合发行前，必须取得可用且允许再分发的替代组件，记录其完整哈希、有效期、兼容范围和许可，更新受审阅安装器清单，在新机器验证首次初始化与查询，并再次检查整合包逐文件校验。只有本机试用或哈希一致不能放行。当前对外候选仅为源码ZIP，迁移见 [component-recovery.md](component-recovery.md)。
 
 CI执行Windows/Linux、Node22/24矩阵测试和打包。远端结果应在GitHub Actions中查看，不能用本地测试替代未运行的CI结果。
 
